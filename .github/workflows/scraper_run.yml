@@ -2,16 +2,24 @@ name: Supermarket Scraper Run
 
 on:
   schedule:
-    # ירוץ כל יומיים בשעה 03:00 לפנות בוקר (לפי שעון UTC)
     - cron: '0 3 */2 * *'
-  workflow_dispatch: # מאפשר לך להפעיל את הסוכן ידנית בלחיצת כפתור מתי שתרצה
+  workflow_dispatch:
 
 jobs:
   scrape_and_upload:
     runs-on: ubuntu-latest
+    
+    # הגדרה שאומרת לכל השלבים לרוץ בתוך תיקיית scraper
+    defaults:
+      run:
+        working-directory: scraper
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
+        with:
+          # כאן אנחנו אומרים לו להוריד את כל הפרויקט (מהשורש)
+          path: '.'
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
@@ -19,6 +27,7 @@ jobs:
           node-version: '20'
 
       - name: Install Dependencies
+        # ירוץ בתוך תיקיית scraper בזכות ה-defaults למעלה
         run: npm install
 
       - name: Install Playwright Browsers
@@ -26,7 +35,6 @@ jobs:
 
       - name: Run Master Agent
         env:
-          # משיכת המפתחות שהגדרת ב-Secrets של המאגר (Settings > Secrets and variables)
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
