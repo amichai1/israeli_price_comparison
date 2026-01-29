@@ -13,7 +13,7 @@ async function sendTelegramNotification(message) {
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) 
   {
-    console.log("We have a problem with Bot token or Telegram id";
+    console.log("We have a problem with Bot token or Telegram id");
     console.log(`Checking Token: ${token ? 'OK' : 'MISSING'}`);
     console.log(`Checking Chat ID: ${chatId ? 'OK' : 'MISSING'}`);
     return;
