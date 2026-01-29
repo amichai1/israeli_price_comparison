@@ -3,7 +3,37 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const util = require('util');
+const axios = require('axios'); // ייבוא axios לצורך שליחת הודעות
 const execPromise = util.promisify(exec);
+
+// טעינת משתני סביבה (חשוב להרצה מקומית עם קובץ .env)
+require('dotenv').config();
+
+/**
+ * פונקציה לשליחת עדכון לטלגרם
+ */
+async function sendTelegramNotification(message) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+
+  if (!token || !chatId) {
+    console.log('⚠️ Telegram credentials missing, skipping notification.');
+    return;
+  }
+
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+
+  try {
+    await axios.post(url, {
+      chat_id: chatId,
+      text: message,
+      parse_mode: 'Markdown'
+    });
+    console.log('📱 Telegram notification sent!');
+  } catch (error) {
+    console.error('❌ Failed to send Telegram:', error.response?.data || error.message);
+  }
+}
 
 /**
  * פונקציה להרצת ה-Uploader ומחיקת הקובץ בסיום
@@ -25,7 +55,7 @@ async function uploadAndCleanup(filePath, storeFullName, chainName) {
 }
 
 /**
- * סוכן שופרסל - מותאם למפרט הכפתור "לחץ להורדה"
+ * סוכן שופרסל - מותאם לכפתור "לחץ להורדה"
  */
 async function scrapeShufersal(context) {
   const page = await context.newPage();
@@ -63,7 +93,7 @@ async function scrapeShufersal(context) {
 }
 
 /**
- * סוכן רשתות Retail
+ * סוכן רשתות Retail (רמי לוי, יוחננוף, אושר עד)
  */
 async function scrapeRetailChain(context, config) {
   const page = await context.newPage();
@@ -114,6 +144,8 @@ async function scrapeRetailChain(context, config) {
  */
 (async () => {
   const startTime = Date.now();
+  console.log(`🕒 Agent started at: ${new Date(startTime).toLocaleTimeString()}`);
+
   if (!fs.existsSync('./downloads')) fs.mkdirSync('./downloads');
 
   const browser = await chromium.launch({ headless: true });
@@ -135,6 +167,15 @@ async function scrapeRetailChain(context, config) {
   }
 
   const diff = Date.now() - startTime;
+  const minutes = Math.floor(diff / 60000);
+  const seconds = ((diff % 60000) / 1000).toFixed(0);
+
+  const summaryText = `*✅ עדכון מחירים הסתיים!* \n\n⏱️ זמן ריצה: ${minutes}m ${seconds}s \n🏢 רשתות שעודכנו: שופרסל, רמי לוי, יוחננוף, אושר עד.`;
+  
   console.log(`\n--- 🏁 Summary ---`);
-  console.log(`⏱️ Total Time: ${Math.floor(diff / 60000)}m ${((diff % 60000) / 1000).toFixed(0)}s`);
+  console.log(summaryText);
+  console.log(`------------------\n`);
+
+  // שליחת ההודעה לטלגרם בסיום הריצה
+  await sendTelegramNotification(summaryText);
 })();
