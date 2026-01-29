@@ -1,9 +1,9 @@
 /**
  * Israeli Supermarket Price Scraper - Multi-Chain Local Version
- * Usage: node scraper.js <path-to-file> <store-id> <chain-name>
- * Example: node scraper.js ./price_file.gz 26 "Rami Levy"
+ * Usage: node upload-market-local.js <path-to-file> <branch-name> <chain-name>
  */
 
+require('dotenv').config();
 const fs = require('fs');
 const zlib = require('zlib');
 const xml2js = require('xml2js');
@@ -14,51 +14,29 @@ const SUPABASE_URL = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABAS
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  console.error('❌ Error: Missing required environment variables!');
-  console.error('   SUPABASE_URL:', SUPABASE_URL ? '✓' : '✗');
-  console.error('   SUPABASE_SERVICE_ROLE_KEY:', SUPABASE_SERVICE_KEY ? '✓' : '✗');
-  console.error('\n📝 Please set these in your .env file:');
-  console.error('   SUPABASE_URL=https://your-project.supabase.co');
-  console.error('   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key');
+  console.error('❌ Error: Missing environment variables!');
   process.exit(1);
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-/**
- * קריאת הקובץ מהדיסק וזיהוי אוטומטי של דחיסה
- */
 function readAndDecompressLocal(filePath) {
   console.log(`\n📖 Reading file: ${filePath}`);
-  
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`File not found: ${filePath}`);
-  }
-
+  if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
   const fileBuffer = fs.readFileSync(filePath);
-  
-  // בדיקת Magic Number של GZIP (0x1f 0x8b)
   if (fileBuffer[0] === 0x1f && fileBuffer[1] === 0x8b) {
-    console.log('📦 Decompressing GZIP content...');
+    console.log('📦 Decompressing GZIP...');
     return zlib.gunzipSync(fileBuffer).toString('utf-8');
   }
-  
-  console.log('📄 Plain XML file detected.');
   return fileBuffer.toString('utf-8');
 }
 
-/**
- * פירסור XML ל-JSON
- */
 async function parseXML(xmlString) {
   console.log('🔍 Parsing XML content...');
   const parser = new xml2js.Parser({ explicitArray: false, mergeAttrs: true });
   return await parser.parseStringPromise(xmlString);
 }
 
-/**
- * יצירה או שליפה של סניף (משתמש ב-chain_name למניעת כפילויות)
- */
 async function getOrCreateStore(storeData) {
   const { data: existingStore } = await supabase
     .from('stores')
@@ -67,10 +45,7 @@ async function getOrCreateStore(storeData) {
     .eq('store_id', storeData.store_id)
     .single();
   
-  if (existingStore) {
-    console.log(`✓ Using existing store: ${storeData.branch_name} (ID: ${existingStore.id})`);
-    return existingStore.id;
-  }
+  if (existingStore) return existingStore.id;
   
   const { data: newStore, error } = await supabase
     .from('stores')
@@ -78,36 +53,31 @@ async function getOrCreateStore(storeData) {
     .select('id')
     .single();
   
-  if (error) {
-    console.error('Error creating store:', error.message);
-    return null;
-  }
-  
-  console.log(`✨ Created new store: ${storeData.branch_name}`);
+  if (error) return null;
   return newStore.id;
 }
 
-/**
- * עיבוד נתוני המחירים והמוצרים
- */
-async function processPriceData(data, targetStoreId, chainName) {
-  const root = data.Root || data;
-  const storeId = root.StoreId;
-  const storeName = root.StoreName || `${chainName} ${storeId}`;
+async function processPriceData(data, branchNameFromArgs, chainName) {
+  const root = data.Root || data.root || data;
+  const storeIdFromXML = root.StoreId || root.StoreID || root.store_id;
   
-  console.log(`\n🏢 Store: ${storeName} | Chain: ${chainName}`);
+  // שם הסניף כפי שיופיע בבסיס הנתונים
+  const finalBranchName = branchNameFromArgs || root.StoreName || `${chainName} ${storeIdFromXML}`;
+  
+  console.log(`\n🏢 Store: ${finalBranchName} | Chain: ${chainName}`);
 
   const dbStoreId = await getOrCreateStore({
     chain_name: chainName,
-    branch_name: storeName,
-    city: root.City || 'Unknown',
-    address: root.Address || null,
-    store_id: targetStoreId || storeId,
+    branch_name: finalBranchName,
+    city: root.City || root.city || 'Unknown',
+    address: root.Address || root.address || null,
+    store_id: storeIdFromXML,
   });
 
   if (!dbStoreId) throw new Error('Could not handle store in DB');
 
-  let items = root.Items?.Item || [];
+  const itemsContainer = root.Items || root.items;
+  let items = itemsContainer?.Item || itemsContainer?.item || [];
   if (!Array.isArray(items)) items = [items];
 
   console.log(`📦 Processing ${items.length} items...`);
@@ -115,25 +85,22 @@ async function processPriceData(data, targetStoreId, chainName) {
   let count = 0;
   for (const item of items) {
     try {
-      // חילוץ מחיר גמיש - תומך ב-3 תגיות שונות של רשתות שונות
       const itemPrice = item.ItemPrice || item.UnitPrice || item.UnitOfMeasurePrice;
-      const barcode = item.ItemCode;
+      const barcode = item.ItemCode || item.item_code;
       
       if (!barcode || !itemPrice || parseFloat(itemPrice) === 0) continue;
 
-      // 1. הוספה/עדכון מוצר בטבלת items
       const { data: itemObj } = await supabase
         .from('items')
         .upsert({
           barcode: barcode,
-          name: item.ItemName,
+          name: item.ItemName || item.item_name,
           unit_measure: item.UnitMeasure || item.UnitOfMeasure || 'piece'
         }, { onConflict: 'barcode' })
         .select('id')
         .single();
 
       if (itemObj) {
-        // 2. הוספה/עדכון מחיר בטבלת prices
         await supabase
           .from('prices')
           .upsert({
@@ -146,29 +113,37 @@ async function processPriceData(data, targetStoreId, chainName) {
         count++;
         if (count % 500 === 0) process.stdout.write(`\r🚀 Progress: ${count}/${items.length} items...`);
       }
-    } catch (e) {
-      // דילוג על פריטים בעייתיים
-    }
+    } catch (e) { /* skip */ }
   }
-  console.log(`\n✅ Finished! Processed ${count} items for ${chainName}.`);
+  return { count, finalBranchName };
 }
 
 // --- CLI Entry Point ---
 const args = process.argv.slice(2);
-if (args.length < 3) {
-  console.log('\n❌ Missing arguments!');
-  console.log('Usage: node scraper.js <file-path> <store-id> <chain-name>');
-  console.log('Example: node scraper.js ./file.gz 12 "Osher Ad"\n');
-  process.exit(1);
-}
-
-const [filePath, storeId, chainName] = args;
+const [filePath, branchName, chainName] = args;
 
 (async () => {
+  // 1. תזמון התחלה
+  const startTime = Date.now();
+
   try {
     const xmlContent = readAndDecompressLocal(filePath);
     const jsonData = await parseXML(xmlContent);
-    await processPriceData(jsonData, storeId, chainName);
+    const result = await processPriceData(jsonData, branchName, chainName);
+
+    // 2. חישוב זמן סיום ופורמט
+    const endTime = Date.now();
+    const durationMs = endTime - startTime;
+    const minutes = Math.floor(durationMs / 60000);
+    const seconds = ((durationMs % 60000) / 1000).toFixed(1);
+
+    console.log(`\n\n--- 🏁 Upload Summary ---`);
+    console.log(`🔗 Chain: ${chainName}`);
+    console.log(`🏪 Store: ${result.finalBranchName}`);
+    console.log(`📦 Items Processed: ${result.count}`);
+    console.log(`⏱️  Duration: ${minutes}m ${seconds}s`);
+    console.log(`-------------------------\n`);
+
     process.exit(0);
   } catch (err) {
     console.error('\n❌ Fatal Error:', err.message);

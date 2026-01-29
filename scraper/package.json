@@ -2,9 +2,13 @@
   "name": "israeli-price-scraper",
   "version": "1.0.0",
   "description": "Scraper for Israeli supermarket price transparency data",
-  "main": "rami-levy-scraper.js",
+  "main": "master-agent.js",
   "scripts": {
+    "start": "node master-agent.js",
+    "upload": "node upload-market-local.js",
+    "upload:final": "node upload-market-final.js",
     "scrape:rami-levy": "node rami-levy-scraper.js",
+    "populate:sample": "node populate-sample-data.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -18,8 +22,9 @@
   "license": "MIT",
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
-    "axios": "^1.6.0",
-    "xml2js": "^0.6.2",
-    "dotenv": "^16.3.1"
+    "axios": "^1.13.4",
+    "dotenv": "^16.3.1",
+    "playwright": "^1.58.0",
+    "xml2js": "^0.6.2"
   }
 }

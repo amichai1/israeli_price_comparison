@@ -4,6 +4,8 @@
  * Usage: node scraper.js <file-path> <store-id> <chain-name>
  */
 
+require('dotenv').config();
+
 const fs = require('fs');
 const zlib = require('zlib');
 const xml2js = require('xml2js');

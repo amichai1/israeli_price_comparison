@@ -1,0 +1,34 @@
+name: Supermarket Scraper Run
+
+on:
+  schedule:
+    # ירוץ כל יומיים בשעה 03:00 לפנות בוקר (לפי שעון UTC)
+    - cron: '0 3 */2 * *'
+  workflow_dispatch: # מאפשר לך להפעיל את הסוכן ידנית בלחיצת כפתור מתי שתרצה
+
+jobs:
+  scrape_and_upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Master Agent
+        env:
+          # משיכת המפתחות שהגדרת ב-Secrets של המאגר (Settings > Secrets and variables)
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: npm start
