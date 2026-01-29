@@ -69,7 +69,7 @@ async function processPriceData(data, branchNameFromArgs, chainName) {
   const dbStoreId = await getOrCreateStore({
     chain_name: chainName,
     branch_name: finalBranchName,
-    city: root.City || root.city || 'Unknown',
+    city: root.City || root.city || 'Petah Tikva',
     address: root.Address || root.address || null,
     store_id: storeIdFromXML,
   });
