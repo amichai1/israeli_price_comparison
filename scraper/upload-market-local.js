@@ -295,7 +295,7 @@ const [filePath, branchName, chainName] = args;
     console.log(`-------------------------\n`);
 
     // Send Telegram notification
-    const message = `✅ Upload Complete\n🔗 Chain: ${chainName}\n🏪 Store: ${result.finalBranchName}\n📦 Items: ${result.count}\n⏱️ Time: ${minutes}m ${seconds}s`;
+    const message = `✅ העלאה הסתיימה\n🔗 רשת: ${chainName}\n🏪 סניף: ${result.finalBranchName}\n📦 פריטים: ${result.count}\n⏱️ זמן: ${minutes}m ${seconds}s`;
     await sendTelegramNotification(message);
 
     process.exit(0);
