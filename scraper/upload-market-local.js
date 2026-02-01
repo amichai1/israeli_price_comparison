@@ -59,8 +59,18 @@ function readAndDecompressLocal(filePath) {
 
 async function parseXML(xmlString) {
   console.log('🔍 Parsing XML content...');
+  
+  // Count XML declarations before cleanup
+  const xmlDeclCount = (xmlString.match(/<\?xml/g) || []).length;
+  console.log(`📋 Found ${xmlDeclCount} XML declaration(s)`);
+  
   // הסרת XML declarations וקלפה מיותרת
   const cleanString = xmlString.replace(/<\?xml.*?\?>/g, '').trim();
+  
+  // Count Root elements before wrapping
+  const rootCount = (cleanString.match(/<Root/gi) || []).length;
+  console.log(`📊 Found ${rootCount} <Root> element(s) in XML`);
+  
   // עטוף בroot שיכול להכיל multiple roots
   const wrappedString = `<MainWrapper>${cleanString}</MainWrapper>`;
   
@@ -123,6 +133,8 @@ async function processPriceData(data, branchNameFromArgs, chainName) {
     throw new Error('No valid XML roots found');
   }
 
+  console.log(`\n📦 Processing ${roots.length} root(s) in total`);
+
   let totalItemsProcessed = 0;
   let totalItemsDeduped = 0;
   let totalPricesProcessed = 0;
@@ -150,9 +162,14 @@ async function processPriceData(data, branchNameFromArgs, chainName) {
     let items = itemsContainer?.Item || itemsContainer?.item || [];
     if (!Array.isArray(items)) items = [items];
 
-    console.log(`📦 Processing ${items.length} items...`);
+    console.log(`📦 Processing ${items.length} items from this root...`);
+    
+    // Debug: count items with valid barcodes
+    const itemsWithBarcodes = items.filter(item => item.ItemCode || item.item_code).length;
+    console.log(`   ✓ Items with valid barcodes: ${itemsWithBarcodes}/${items.length}`);
 
     const chunks = chunkArray(items, CHUNK_SIZE);
+    console.log(`   ✓ Split into ${chunks.length} chunk(s) of size ${CHUNK_SIZE}`);
 
     for (const chunk of chunks) {
       try {
