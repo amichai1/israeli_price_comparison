@@ -82,7 +82,12 @@ async function scrapeShufersal(context) {
 
     const finalPath = path.join(downloadPath, `shufersal-269.gz`);
     await download.saveAs(finalPath);
-    console.log('✅ Shufersal download complete.');
+    
+    // Check file size
+    const stats = fs.statSync(finalPath);
+    const fileSizeKB = (stats.size / 1024).toFixed(2);
+    const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+    console.log(`✅ Shufersal download complete. Size: ${fileSizeMB} MB (${fileSizeKB} KB)`);
 
     await uploadAndCleanup(finalPath, "יוניברס סגולה (269)", "שופרסל");
   } catch (err) {
