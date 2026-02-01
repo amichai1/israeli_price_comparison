@@ -4,6 +4,7 @@ const path = require('path');
 const { spawn } = require('child_process'); // שינינו ל-spawn לצורך לוגים חיים
 const axios = require('axios');
 require('dotenv').config();
+const zlib = require('zlib');
 
 /**
  * פונקציה לשליחת עדכון לטלגרם
@@ -67,14 +68,11 @@ async function scrapeShufersal(context) {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const page = await context.newPage();
     
-    // 🛡️ טקטיקת התחמקות 1: הגדרת Headers אנושיים במיוחד
+    // הגדרות "חמקן"
     await page.setExtraHTTPHeaders({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
-        'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
         'Upgrade-Insecure-Requests': '1',
         'Referer': 'https://prices.shufersal.co.il/'
     });
@@ -82,29 +80,30 @@ async function scrapeShufersal(context) {
     try {
       console.log(`\n🛒 Starting Shufersal Scan (Attempt ${attempt}/${MAX_RETRIES})...`);
       
-      // 🛡️ טקטיקת התחמקות 2: הסתרת ה-Webdriver
-      await page.addInitScript(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      });
+      // Timeout נדיב להורדות איטיות
+      page.setDefaultTimeout(180000); 
 
-      await page.goto('https://prices.shufersal.co.il/', { waitUntil: 'networkidle', timeout: 60000 });
+      // הסתרת בוט
+      await page.addInitScript(() => { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); });
+
+      await page.goto('https://prices.shufersal.co.il/', { waitUntil: 'networkidle' });
       
-      // בחירת קטגוריה וסניף
       await page.selectOption('select#ddlCategory', { label: 'PricesFull' });
-      await page.waitForTimeout(2000); 
-      await page.selectOption('select#ddlStore', '269');
-
-      // המתנה שהשרת יירגע
-      await page.waitForLoadState('networkidle');
       await page.waitForTimeout(3000); 
+      
+      await page.selectOption('select#ddlStore', '269');
+      
+      // המתנה שהרשת תירגע
+      await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(5000); 
 
       const downloadButton = page.getByText('לחץ להורדה').first();
       await downloadButton.waitFor({ state: 'visible' });
 
       console.log('⏳ Clicking download...');
-      const downloadPromise = page.waitForEvent('download');
       
-      // לחיצה "אנושית"
+      const downloadPromise = page.waitForEvent('download', { timeout: 180000 });
+      
       await downloadButton.hover();
       await page.mouse.down();
       await page.mouse.up();
@@ -113,38 +112,52 @@ async function scrapeShufersal(context) {
       const finalPath = path.join(downloadPath, `shufersal-269.gz`);
       await download.saveAs(finalPath);
 
-      // 🔍 בדיקת הקובץ
-      const stats = fs.statSync(finalPath);
-      const fileSizeInMB = stats.size / (1024 * 1024);
-      console.log(`📦 Downloaded: ${fileSizeInMB.toFixed(4)} MB (${stats.size} bytes)`);
+      // --- 🛑 בדיקת תקינות הקובץ (במקום גודל) 🛑 ---
+      console.log('🔍 Validating XML integrity...');
+      
+      try {
+          const fileBuffer = fs.readFileSync(finalPath);
+          // ניסיון לפתוח את ה-GZIP. אם הקובץ קטוע, זה יזרוק שגיאה מיידית!
+          const content = zlib.gunzipSync(fileBuffer).toString('utf-8').trim();
+          
+          // בדיקה שהתוכן מסתיים בסגירת תגית (סימן שה-XML שלם)
+          if (!content.endsWith('>')) {
+              throw new Error("XML File is incomplete (does not end with '>')");
+          }
 
-      // אם הקובץ קטן מ-100KB - נדפיס את התוכן שלו ונזרוק שגיאה
-      if (fileSizeInMB < 0.1) {
-         const content = fs.readFileSync(finalPath, 'utf-8');
-         console.log('\n❌ BLOCKED! Content of the small file:');
-         console.log('---------------------------------------------------');
-         console.log(content.substring(0, 500)); // מדפיס את ה-500 תווים הראשונים
-         console.log('---------------------------------------------------\n');
-         
-         throw new Error('File indicates blocking (too small)');
+          // בדיקה שקיימת תגית סוגרת של Root (לא חובה אבל מומלץ)
+          if (!content.includes('</Root>') && !content.includes('</root>')) {
+             throw new Error("XML missing closing Root tag");
+          }
+
+          console.log(`✅ File is valid! Length: ${content.length} chars.`);
+
+      } catch (validationError) {
+          throw new Error(`Corrupted file downloaded: ${validationError.message}`);
       }
+      // -----------------------------------------------
 
-      console.log('✅ Shufersal download verified!');
       await page.close();
       await uploadAndCleanup(finalPath, "יוניברס סגולה (269)", "שופרסל");
-      return; 
+      return; // יציאה מהלולאה בהצלחה
 
     } catch (err) {
       console.error(`⚠️ Attempt ${attempt} failed: ${err.message}`);
-      await page.close();
+      
+      // סגירת הדף וניקוי
+      try { await page.close(); } catch(e) {}
+      const tempPath = path.join(downloadPath, `shufersal-269.gz`);
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+
+      // אם נכשלנו, נחכה זמן משמעותי כדי לא להיחסם
       if (attempt < MAX_RETRIES) {
-          console.log(`🔄 Retrying in 10 seconds...`);
-          await new Promise(r => setTimeout(r, 10000));
+          const waitTime = 20000 + (Math.random() * 10000); // 20-30 שניות
+          console.log(`⏳ Waiting ${Math.round(waitTime/1000)}s before retry to avoid blocking...`);
+          await new Promise(r => setTimeout(r, waitTime));
       }
     }
   }
 }
-
 /**
  * סוכן רשתות Retail
  */
@@ -217,7 +230,7 @@ async function scrapeRetailChain(context, config) {
   const minutes = Math.floor(diff / 60000);
   const seconds = ((diff % 60000) / 1000).toFixed(0);
 
-  const summaryText = `*✅ עדכון מחירים הסתיים!* \n\n⏱️ זמן: ${minutes}m ${seconds}s \n🏢 רשתות שעודכנו: שופרסל, רמי לוי, יוחננוף, אושר עד.`;
+  const summaryText = `*✅ עדכון מחירים הסתיים!*\n⏱️ זמן: ${minutes}m ${seconds}s \n🏢 רשתות שעודכנו: שופרסל, רמי לוי, יוחננוף, אושר עד.`;
   console.log(`\n--- 🏁 Summary ---\n${summaryText}`);
 
   await sendTelegramNotification(summaryText);
