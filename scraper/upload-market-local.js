@@ -59,20 +59,40 @@ function readAndDecompressLocal(filePath) {
 
 async function parseXML(xmlString) {
   console.log('🔍 Parsing XML content...');
+  // הסרת XML declarations וקלפה מיותרת
+  const cleanString = xmlString.replace(/<\?xml.*?\?>/g, '').trim();
+  // עטוף בroot שיכול להכיל multiple roots
+  const wrappedString = `<MainWrapper>${cleanString}</MainWrapper>`;
+  
   const parser = new xml2js.Parser({ explicitArray: false, mergeAttrs: true });
-  return await parser.parseStringPromise(xmlString);
+  return await parser.parseStringPromise(wrappedString);
 }
 
 async function getOrCreateStore(storeData) {
-  const { data: existingStore } = await supabase
+const { data: existingById } = await supabase
     .from('stores')
     .select('id')
     .eq('chain_name', storeData.chain_name)
     .eq('store_id', storeData.store_id)
-    .maybeSingle(); // שימוש ב-maybeSingle למניעת שגיאות
+    .maybeSingle();
   
-  if (existingStore) return existingStore.id;
-  
+  if (existingById) return existingById.id;
+
+  // --- התיקון לכפילויות ---
+  // שלב 2: אם לא מצאנו לפי ID (כי ה-XML שלח 001 פתאום), נחפש לפי שם הסניף
+  // כך נמנע יצירת סניף חדש אם אנחנו כבר מכירים את "יוניברס סגולה (269)"
+  const { data: existingByName } = await supabase
+    .from('stores')
+    .select('id')
+    .eq('chain_name', storeData.chain_name)
+    .eq('branch_name', storeData.branch_name)
+    .maybeSingle();
+
+  if (existingByName) {
+      console.log(`⚠️ Matched store by NAME instead of ID. Using existing DB ID: ${existingByName.id}`);
+      return existingByName.id;
+  }
+    // ------------------------
   const { data: newStore, error } = await supabase
     .from('stores')
     .insert(storeData)
@@ -93,87 +113,144 @@ function chunkArray(array, size) {
 }
 
 async function processPriceData(data, branchNameFromArgs, chainName) {
-  const root = data.Root || data.root || data;
-  const storeIdFromXML = root.StoreId || root.StoreID || root.store_id;
-  const finalBranchName = branchNameFromArgs || root.StoreName || `${chainName} ${storeIdFromXML}`;
+  // Handle multiple roots wrapped in MainWrapper
+  let roots = data.MainWrapper?.Root || data.MainWrapper?.root;
+  if (!Array.isArray(roots)) {
+    roots = roots ? [roots] : [];
+  }
   
-  console.log(`\n🏢 Store: ${finalBranchName} | Chain: ${chainName}`);
+  if (roots.length === 0) {
+    throw new Error('No valid XML roots found');
+  }
 
-  const dbStoreId = await getOrCreateStore({
-    chain_name: chainName,
-    branch_name: finalBranchName,
-    city: root.City || root.city || DEFAULT_CITY,
-    address: root.Address || root.address || null,
-    store_id: storeIdFromXML,
-  });
+  let totalItemsProcessed = 0;
+  let totalItemsDeduped = 0;
+  let totalPricesProcessed = 0;
+  let totalPricesDeduped = 0;
 
-  if (!dbStoreId) throw new Error('Could not handle store in DB');
+  // Process each root separately
+  for (let rootIndex = 0; rootIndex < roots.length; rootIndex++) {
+    const root = roots[rootIndex];
+    const storeIdFromXML = root.StoreId || root.StoreID || root.store_id;
+    const finalBranchName = branchNameFromArgs || root.StoreName || `${chainName} ${storeIdFromXML}`;
+    
+    console.log(`\n🏢 Store: ${finalBranchName} | Chain: ${chainName}${roots.length > 1 ? ` (Root ${rootIndex + 1}/${roots.length})` : ''}`);
 
-  const itemsContainer = root.Items || root.items;
-  let items = itemsContainer?.Item || itemsContainer?.item || [];
-  if (!Array.isArray(items)) items = [items];
+    const dbStoreId = await getOrCreateStore({
+      chain_name: chainName,
+      branch_name: finalBranchName,
+      city: root.City || root.city || DEFAULT_CITY,
+      address: root.Address || root.address || null,
+      store_id: storeIdFromXML,
+    });
 
-  console.log(`📦 Processing ${items.length} items in batches...`);
+    if (!dbStoreId) throw new Error('Could not handle store in DB');
 
-  const chunks = chunkArray(items, 1000); // חלוקה ל-1000 בכל פעם
-  let totalCount = 0;
+    const itemsContainer = root.Items || root.items;
+    let items = itemsContainer?.Item || itemsContainer?.item || [];
+    if (!Array.isArray(items)) items = [items];
 
-  for (const chunk of chunks) {
-    try {
-      // 1. הכנת הפריטים לעדכון/הכנסה
-      const itemsToUpsert = chunk.map(item => {
-        const barcode = item.ItemCode || item.item_code;
-        if (!barcode) return null;
-        return {
-          barcode: barcode,
-          name: item.ItemName || item.item_name,
-          unit_measure: item.UnitMeasure || item.UnitOfMeasure || 'piece'
-        };
-      }).filter(Boolean);
+    console.log(`📦 Processing ${items.length} items...`);
 
-      // 2. ביצוע Upsert קבוצתי לפריטים וקבלת ה-IDs שלהם
-      const { data: upsertedItems, error: itemError } = await supabase
-        .from('items')
-        .upsert(itemsToUpsert, { onConflict: 'barcode' })
-        .select('id, barcode');
+    const chunks = chunkArray(items, CHUNK_SIZE);
 
-      if (itemError) throw itemError;
+    for (const chunk of chunks) {
+      try {
+        // 1. Deduplicate items by barcode using Map
+        const uniqueItemsMap = new Map();
+        chunk.forEach(item => {
+          const barcode = item.ItemCode || item.item_code;
+          if (!barcode) return;
+          
+          // Only keep the first occurrence of each barcode
+          if (!uniqueItemsMap.has(barcode)) {
+            uniqueItemsMap.set(barcode, {
+              barcode: barcode,
+              name: item.ItemName || item.item_name,
+              unit_measure: item.UnitMeasure || item.UnitOfMeasure || 'piece'
+            });
+          }
+        });
 
-      // מפת עזר לקישור ברקוד ל-ID
-      const idMap = new Map(upsertedItems.map(row => [row.barcode, row.id]));
+        const itemsToUpsert = Array.from(uniqueItemsMap.values());
+        const itemsDedupCount = chunk.length - itemsToUpsert.length;
+        totalItemsDeduped += itemsDedupCount;
+        totalItemsProcessed += chunk.length;
 
-      // 3. הכנת המחירים לעדכון קבוצתי
-      const pricesToUpsert = chunk.map(item => {
-        const itemPrice = item.ItemPrice || item.UnitPrice || item.UnitOfMeasurePrice;
-        const barcode = item.ItemCode || item.item_code;
-        const itemId = idMap.get(barcode);
+        if (itemsDedupCount > 0) {
+          console.log(`  🔄 Deduplicated ${itemsDedupCount} items`);
+        }
 
-        if (!itemId || !itemPrice || parseFloat(itemPrice) === 0) return null;
+        // 2. Upsert items and get their IDs
+        const { data: upsertedItems, error: itemError } = await supabase
+          .from('items')
+          .upsert(itemsToUpsert, { onConflict: 'barcode' })
+          .select('id, barcode');
 
-        return {
-          item_id: itemId,
-          store_id: dbStoreId,
-          price: parseFloat(itemPrice),
-          last_updated: new Date().toISOString()
-        };
-      }).filter(Boolean);
+        if (itemError) throw itemError;
 
-      if (pricesToUpsert.length > 0) {
-        const { error: priceError } = await supabase
-          .from('prices')
-          .upsert(pricesToUpsert, { onConflict: 'item_id,store_id' });
-        
-        if (priceError) throw priceError;
+        // Map barcodes to IDs
+        const idMap = new Map(upsertedItems.map(row => [row.barcode, row.id]));
+
+        // 3. Deduplicate prices by (item_id, store_id) using Map
+        const uniquePricesMap = new Map();
+        chunk.forEach(item => {
+          const itemPrice = item.ItemPrice || item.UnitPrice || item.UnitOfMeasurePrice;
+          const barcode = item.ItemCode || item.item_code;
+          const itemId = idMap.get(barcode);
+
+          if (!itemId || !itemPrice || parseFloat(itemPrice) === 0) return;
+
+          const key = `${itemId}-${dbStoreId}`;
+          // Only keep the first occurrence of each item-store combination
+          if (!uniquePricesMap.has(key)) {
+            uniquePricesMap.set(key, {
+              item_id: itemId,
+              store_id: dbStoreId,
+              price: parseFloat(itemPrice),
+              last_updated: new Date().toISOString()
+            });
+          }
+        });
+
+        const pricesToUpsert = Array.from(uniquePricesMap.values());
+        const pricesDedupCount = chunk.length - pricesToUpsert.length;
+        totalPricesDeduped += pricesDedupCount;
+        totalPricesProcessed += chunk.length;
+
+        if (pricesToUpsert.length > 0) {
+          const { error: priceError } = await supabase
+            .from('prices')
+            .upsert(pricesToUpsert, { onConflict: 'item_id,store_id' });
+          
+          if (priceError) throw priceError;
+        }
+
+        process.stdout.write(`\r🚀 Progress: ${totalItemsProcessed} items, ${pricesToUpsert.length} prices synced...`);
+      } catch (e) {
+        console.error(`\n⚠️ Batch error: ${e.message}`);
       }
+    }
 
-      totalCount += chunk.length;
-      process.stdout.write(`\r🚀 Progress: ${totalCount}/${items.length} items synchronized...`);
-    } catch (e) {
-      console.error(`\n⚠️ Batch error: ${e.message}`);
+    // Update store's last_updated timestamp after all chunks are processed
+    const { error: storeUpdateError } = await supabase
+      .from('stores')
+      .update({ last_updated: new Date().toISOString() })
+      .eq('id', dbStoreId);
+    
+    if (storeUpdateError) {
+      console.error(`\n⚠️ Warning: Failed to update store last_updated: ${storeUpdateError.message}`);
+    } else {
+      console.log(`\n✅ Updated store last_updated timestamp`);
     }
   }
   
-  return { count: totalCount, finalBranchName };
+  // Log deduplication stats
+  console.log(`\n\n📊 Deduplication Statistics:`);
+  console.log(`  Items: ${totalItemsDeduped} duplicates removed from ${totalItemsProcessed} total`);
+  console.log(`  Prices: ${totalPricesDeduped} duplicates removed from ${totalPricesProcessed} total`);
+  
+  return { count: totalItemsProcessed, finalBranchName: branchNameFromArgs || 'Unknown Store' };
 }
 
 // --- CLI Entry Point ---
