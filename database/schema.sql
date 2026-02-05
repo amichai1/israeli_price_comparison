@@ -105,3 +105,28 @@ ON CONFLICT (name) DO NOTHING;
 INSERT INTO public.chains (name, chain_code, scraper_type, username, base_url)
 VALUES ('רמי לוי', '7290027600007', 'cerberus', 'RamiLevi', 'https://url.retail.publishedprices.co.il/login')
 ON CONFLICT (chain_code) DO NOTHING;
+-- =============================================
+-- 6. SEED DATA - נתוני בסיס (רשתות וערים)
+-- =============================================
+
+-- ערים (כולל עיר וירטואלית לאתרי אונליין)
+INSERT INTO public.cities (name, is_active) VALUES 
+('פתח תקווה', true),
+('Internet', true)
+ON CONFLICT (name) DO NOTHING;
+
+-- רשתות (קבוצת Cerberus ושופרסל)
+INSERT INTO public.chains (name, chain_code, scraper_type, username, base_url)
+VALUES 
+    ('רמי לוי', '7290027600007', 'cerberus', 'RamiLevi', 'https://url.retail.publishedprices.co.il/login'),
+    ('אושר עד', '7290103152017', 'cerberus', 'OsherAd', 'http://url.retail.publishedprices.co.il/login'),
+    ('ויקטורי', '7290696200003', 'cerberus', 'Victory', 'http://url.retail.publishedprices.co.il/login'),
+    ('חצי חינם', '7290633800006', 'cerberus', 'HaziHinam', 'http://url.retail.publishedprices.co.il/login'),
+    ('יוחננוף', '7290803800003', 'cerberus', 'Yochananof', 'http://url.retail.publishedprices.co.il/login'),
+    ('מחסני השוק', '7290661400001', 'cerberus', 'Shook', 'http://url.retail.publishedprices.co.il/login'),
+    ('קרפור / יינות ביתן', '7290027600007-BITAN', 'cerberus', 'YeinotBitan', 'http://url.retail.publishedprices.co.il/login'),
+    ('שופרסל', '7290027600007-SHUF', 'shufersal', NULL, 'http://prices.shufersal.co.il/')
+ON CONFLICT (chain_code) DO NOTHING;
+-- יצירת אילוץ ייחודיות: שילוב של מזהה רשת + מזהה חנות חייב להיות חד-פעמי
+ALTER TABLE public.stores 
+ADD CONSTRAINT stores_unique_chain_store UNIQUE (chain_id, store_id);
