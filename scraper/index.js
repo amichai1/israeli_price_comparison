@@ -76,7 +76,7 @@ async function main() {
         await provider.run(DOC_TYPES.PRICE_FULL);
 
         // Cleanup: Polymorphic call (BaseProvider guarantees this method exists)
-        provider.clearCache();
+        await provider.clearCache();
 
       } catch (chainError) {
         console.error(`❌ Error processing chain ${chain.name}:`, chainError.message);

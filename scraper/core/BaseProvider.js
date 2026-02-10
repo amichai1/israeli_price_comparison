@@ -121,14 +121,21 @@ class BaseProvider {
 
   async processSingleTask(task, processor, docType) {
     const { fileName, url, storeId } = task;
-    const tempId = Math.random().toString(36).substring(7);
-    const downloadPath = path.join(this.downloadDir, `${tempId}_${fileName}`);
-    const extractPath = downloadPath.replace(/\.gz$|\.zip$/, '.xml');
+    const extractPath = path.join(this.downloadDir, `${Date.now()}_${fileName.replace(/\.gz$|\.zip$/, '.xml')}`);
+    let downloadPath = null;
 
     try {
-      // א. הורדה
+      // א. הורדה - call child class method if available
       console.log(`⬇️  מוריד קובץ: ${fileName}`);
-      await this.downloadFile(url, downloadPath);
+
+      if (this.downloadFileViaPlaywright) {
+        // אם Provider תומך ב-Playwright (כמו CerberusProvider)
+        downloadPath = await this.downloadFileViaPlaywright(fileName);
+      } else {
+        // fallback ל-axios (רק אם יש URL)
+        downloadPath = path.join(this.downloadDir, `${Date.now()}_${fileName}`);
+        await this.downloadFile(url, downloadPath);
+      }
 
       // ב. חילוץ
       if (fileName.endsWith('.gz') || fileName.endsWith('.zip')) {
@@ -139,10 +146,10 @@ class BaseProvider {
 
       // ג. עיבוד
       console.log(`⚙️  מעבד את תוכן הקובץ: ${fileName}...`);
-      await processor.process(extractPath, { 
+      await processor.process(extractPath, {
         externalStoreId: storeId,
         fileName: fileName,
-        docType: docType 
+        docType: docType
       });
 
       console.log(`✅ הושלם בהצלחה: ${fileName}`);
@@ -187,15 +194,17 @@ class BaseProvider {
     }
     
     const uniqueMap = new Map();
-    
+
     for (const file of allFiles) {
       if (activeIds.includes(file.storeId)) {
-        if (!uniqueMap.has(file.url)) {
-          uniqueMap.set(file.url, file);
+        // Use fileName as unique key instead of URL (since URL might be null)
+        const key = file.url || file.fileName;
+        if (!uniqueMap.has(key)) {
+          uniqueMap.set(key, file);
         }
       }
     }
-    
+
     return Array.from(uniqueMap.values());
   }
 
@@ -204,7 +213,7 @@ class BaseProvider {
       const { data, error } = await this.supabase
         .from('stores')
         .select('store_id, cities!inner(is_active)')
-        .eq('chain_id', this.config.dbId)
+        .eq('chain_id', this.config.id)
         .eq('cities.is_active', true);
       
       if (error) {
@@ -223,11 +232,11 @@ class BaseProvider {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         const writer = fs.createWriteStream(outputPath);
-        const response = await axios({ 
-          url, 
-          method: 'GET', 
-          responseType: 'stream', 
-          timeout: 30000,
+        const response = await axios({
+          url,
+          method: 'GET',
+          responseType: 'stream',
+          timeout: 120000, // Increased to 120s for large files
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
           }

@@ -11,16 +11,23 @@ class StoreProcessor extends BaseProcessor {
 
   async process(filePath, metadata) {
     await this.loadCitiesMap();
-    
+    console.log(`📊 Processing stores file: ${metadata.fileName}`);
+
     return new Promise((resolve, reject) => {
       const stream = fs.createReadStream(filePath);
       const xml = new XmlStream(stream);
       let buffer = [];
+      let totalParsed = 0; // ✅ מונה כמה stores נמצאו
+      let totalNormalized = 0; // ✅ מונה כמה stores תקינים
 
       // ✅ FIXED: הגדרת handleNode לפני השימוש בו
       const handleNode = async (node) => {
+        totalParsed++;
         const normalized = this.normalize(node);
-        if (normalized) buffer.push(normalized);
+        if (normalized) {
+          buffer.push(normalized);
+          totalNormalized++;
+        }
         
         if (buffer.length >= 500) {
           xml.pause();
@@ -51,6 +58,13 @@ class StoreProcessor extends BaseProcessor {
             return;
           }
         }
+
+        // ✅ סיכום
+        console.log(`📊 Store processing summary:`);
+        console.log(`   - Total stores in XML: ${totalParsed}`);
+        console.log(`   - Valid stores (normalized): ${totalNormalized}`);
+        console.log(`   - Skipped (invalid/unknown city): ${totalParsed - totalNormalized}`);
+
         resolve();
       });
 
@@ -103,7 +117,7 @@ class StoreProcessor extends BaseProcessor {
     }
 
     return {
-      chain_id: this.config.dbId,
+      chain_id: this.config.id, // ✅ FIXED: id instead of dbId
       store_id: storeId.toString(),
       branch_name: storeName.trim(),
       address: node.Address || '',
