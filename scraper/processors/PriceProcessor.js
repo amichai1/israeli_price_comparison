@@ -177,7 +177,7 @@ class PriceProcessor extends BaseProcessor {
       .from('stores')
       .select('id')
       .eq('store_id', extId)
-      .eq('chain_id', this.config.dbId)
+      .eq('chain_id', this.config.id)
       .single();
     
     if (error) {

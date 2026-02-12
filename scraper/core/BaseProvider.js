@@ -204,7 +204,7 @@ class BaseProvider {
       const { data, error } = await this.supabase
         .from('stores')
         .select('store_id, cities!inner(is_active)')
-        .eq('chain_id', this.config.dbId)
+        .eq('chain_id', this.config.id)
         .eq('cities.is_active', true);
       
       if (error) {
