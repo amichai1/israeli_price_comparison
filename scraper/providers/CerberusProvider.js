@@ -1,6 +1,5 @@
 // scraper/providers/CerberusProvider.js
 const { Client } = require('basic-ftp');
-const https = require('https');
 const axios = require('axios');
 const fs = require('fs');
 const { pipeline } = require('stream');
@@ -10,9 +9,6 @@ const StoreProcessor = require('../processors/StoreProcessor');
 const PriceProcessor = require('../processors/PriceProcessor');
 
 const streamPipeline = promisify(pipeline);
-
-// Cerberus server has known SSL certificate issues
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 // FTP filter pattern per doc type (lowercase, partial match on filename)
 const FILE_PATTERNS = {
@@ -113,8 +109,9 @@ class CerberusProvider extends BaseProvider {
   }
 
   /**
-   * הורדת קובץ עם SSL bypass עבור שרת Cerberus
-   * עוקף את BaseProvider.downloadFile כי Cerberus דורש rejectUnauthorized: false
+   * הורדת קובץ מ-Cerberus
+   * כתובות הורדה ישירות פועלות ללא auth (כמו בסקראפר הישן)
+   * עוקף את BaseProvider.downloadFile עם timeout גבוה יותר לקבצים גדולים
    */
   async downloadFile(url, outputPath, retries = 3) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -125,7 +122,6 @@ class CerberusProvider extends BaseProvider {
           method: 'GET',
           responseType: 'stream',
           timeout: 120000,
-          httpsAgent,
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
           }
