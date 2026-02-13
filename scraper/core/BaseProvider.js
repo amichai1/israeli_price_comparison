@@ -123,7 +123,7 @@ class BaseProvider {
     const { fileName, url, storeId } = task;
     const tempId = Math.random().toString(36).substring(7);
     const downloadPath = path.join(this.downloadDir, `${tempId}_${fileName}`);
-    const extractPath = downloadPath.replace(/\.gz$|\.zip$/, '.xml');
+    let extractPath = downloadPath.replace(/\.gz$|\.zip$/, '.xml');
 
     try {
       // א. הורדה
@@ -133,8 +133,11 @@ class BaseProvider {
       // ב. חילוץ
       if (fileName.endsWith('.gz') || fileName.endsWith('.zip')) {
         await this.decompressFile(downloadPath, extractPath);
-      } else {
+      } else if (downloadPath !== extractPath) {
         fs.copyFileSync(downloadPath, extractPath);
+      } else {
+        // הקובץ כבר XML, לא צריך חילוץ — משתמשים בו ישירות
+        extractPath = downloadPath;
       }
 
       // ג. עיבוד
