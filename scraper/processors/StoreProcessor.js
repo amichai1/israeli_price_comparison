@@ -103,7 +103,7 @@ class StoreProcessor extends BaseProcessor {
     }
 
     return {
-      chain_id: this.config.dbId,
+      chain_id: this.config.id,
       store_id: storeId.toString(),
       branch_name: storeName.trim(),
       address: node.Address || '',

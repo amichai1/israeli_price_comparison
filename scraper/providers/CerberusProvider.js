@@ -1,27 +1,31 @@
 // scraper/providers/CerberusProvider.js
+const { Client } = require('basic-ftp');
 const axios = require('axios');
-const https = require('https');
-const cheerio = require('cheerio');
-const zlib = require('zlib');
-const { chromium } = require('playwright');
+const fs = require('fs');
+const { pipeline } = require('stream');
+const { promisify } = require('util');
 const { BaseProvider, DOC_TYPES } = require('../core/BaseProvider');
 const StoreProcessor = require('../processors/StoreProcessor');
 const PriceProcessor = require('../processors/PriceProcessor');
 
-// ⚠️ TEMPORARY SSL WORKAROUND - Cerberus has certificate issues
-const httpsAgent = new https.Agent({  
-  rejectUnauthorized: false
-});
+const streamPipeline = promisify(pipeline);
+
+// FTP filter pattern per doc type (lowercase, partial match on filename)
+const FILE_PATTERNS = {
+  [DOC_TYPES.STORES]:       'store',
+  [DOC_TYPES.PRICE_FULL]:   'pricefull',
+  [DOC_TYPES.PRICE_UPDATE]: 'price',
+  [DOC_TYPES.PROMO_FULL]:   'promofull',
+  [DOC_TYPES.PROMO_UPDATE]: 'promo',
+};
 
 class CerberusProvider extends BaseProvider {
   constructor(config, supabase) {
     super(config, supabase);
-    this.browser = null;
+    this.ftpHost = 'url.retail.publishedprices.co.il';
+    this.baseDownloadUrl = 'https://url.retail.publishedprices.co.il/file/d';
   }
 
-  /**
-   * מימוש הפקטורי
-   */
   getProcessor(docType) {
     if (docType === DOC_TYPES.STORES) {
       return new StoreProcessor(this.supabase, this.config);
@@ -30,149 +34,118 @@ class CerberusProvider extends BaseProvider {
   }
 
   /**
-   * הורדת רשימת קבצים - שימוש ב-Playwright להתחברות אוטומטית
+   * שליפת רשימת קבצים מ-Cerberus דרך FTP
+   * מסנן לפי סוג מסמך + תאריך היום
    */
-  async fetchFileList(docType, retries = 3) {
-    let browser;
-    let page;
-    
+  async fetchFileList(docType) {
+    const client = new Client();
+
     try {
-      console.log(`🔌 Opening browser for ${this.config.name}...`);
-      browser = await chromium.launch({ headless: true });
-      page = await browser.newPage();
-      
-      // שלב 1: תנועה לעמוד ההתחברות
-      console.log(`🌐 Navigating to login page...`);
-      await page.goto('https://url.retail.publishedprices.co.il/login', { waitUntil: 'networkidle' });
-      
-      // שלב 2: מלא את השם משתמש
-      console.log(`📝 Entering username: ${this.config.username}`);
-      await page.fill('input[name="username"]', this.config.username);
-      
-      // שלב 3: לחץ Enter להתחברות
-      console.log(`⌨️ Pressing Enter...`);
-      await page.keyboard.press('Enter');
-      
-      // שלב 4: המתן לטבלת הקבצים להופיע
-      console.log(`⏳ Waiting for files table...`);
-      await page.waitForSelector('table', { timeout: 20000 });
-      
-      // שלב 5: חפש קבצים לפי סוג
-      console.log(`🔍 Filtering for ${docType} files...`);
-      const searchSelector = 'input[type="search"]';
-      
-      if (await page.isVisible(searchSelector)) {
-        // אם יש search box, השתמש בו
-        if (docType === DOC_TYPES.STORES) {
-          await page.fill(searchSelector, 'store');
-        } else {
-          await page.fill(searchSelector, 'pricefull');
-        }
-        await page.waitForTimeout(1000); // המתן לסינון
+      console.log(`🔌 FTP connecting to ${this.ftpHost} (user: ${this.config.username})`);
+
+      await client.access({
+        host: this.ftpHost,
+        user: this.config.username || '',
+        password: '',
+        secure: true,
+        secureOptions: { rejectUnauthorized: false }
+      });
+
+      console.log('✓ FTP connected');
+
+      const allFiles = await client.list();
+      console.log(`📂 Total files on server: ${allFiles.length}`);
+
+      const pattern = FILE_PATTERNS[docType];
+      if (!pattern) {
+        console.warn(`⚠️ Unknown doc type: ${docType}`);
+        return [];
       }
-      
-      // שלב 6: חילוץ נתוני הטבלה
-      console.log(`📊 Extracting file list...`);
-      const files = await page.evaluate((docType) => {
-        const rows = Array.from(document.querySelectorAll('table tr'));
-        const files = [];
-        
-        rows.forEach((row) => {
-          const link = row.querySelector('a');
-          if (!link) return;
-          
-          const fileName = link.textContent.trim();
-          const href = link.getAttribute('href');
-          
-          if (!fileName || !href) return;
-          
-          // בניית URL מלא
-          const url = href.startsWith('http') 
-            ? href 
-            : href.startsWith('/') 
-              ? window.location.origin + href 
-              : window.location.origin + '/' + href;
-          
-          // סינון לפי סוג
-          if (docType === 'Stores' && !fileName.toLowerCase().includes('store')) return;
-          if (docType !== 'Stores' && !fileName.toLowerCase().includes('price')) return;
-          
-          files.push({
-            fileName,
-            url,
-            storeId: fileName.match(/-(\d{3,4})-/)?.[1] || null,
-            date: new Date()
-          });
-        });
-        
-        return files;
-      }, docType);
-      
-      console.log(`🔎 Found ${files.length} files for [${docType}]`);
-      return files;
-      
+
+      // תאריך היום בפורמט שמופיע בשמות הקבצים: YYYYMMDD
+      const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+      const filtered = allFiles.filter(f => {
+        const name = f.name.toLowerCase();
+
+        if (!name.includes(pattern)) return false;
+
+        // מניעת התנגשויות: "price" מתאים גם ל-"pricefull"
+        if (pattern === 'price' && name.includes('pricefull')) return false;
+        if (pattern === 'promo' && name.includes('promofull')) return false;
+
+        // רק קבצים מהיום
+        if (!f.name.includes(today)) return false;
+
+        return true;
+      });
+
+      console.log(`🔍 Found ${filtered.length} ${docType} files from today (${today})`);
+
+      return filtered.map(f => ({
+        fileName: f.name,
+        url: `${this.baseDownloadUrl}/${f.name}`,
+        storeId: this.extractStoreId(f.name),
+        date: f.modifiedAt || new Date()
+      }));
+
     } catch (e) {
-      console.error(`❌ Failed to fetch file list: ${e.message}`);
+      console.error(`❌ FTP error for ${this.config.name}: ${e.message}`);
       return [];
     } finally {
-      if (page) await page.close();
-      if (browser) await browser.close();
+      client.close();
     }
   }
 
   /**
-   * הורדה וחילוץ קובץ .gz - בדיוק כמו הקוד הישן שעבד!
+   * חילוץ מזהה חנות משם הקובץ
+   * Pattern: PriceFull7290027600007-001-202602120000.gz
+   *                                ^^^
+   * תופס ספרות בין מקף ראשון למקף שלפני ה-timestamp (12 ספרות)
    */
-  async downloadAndDecompress(url) {
-    console.log(`📥 Downloading: ${url}`);
-    
-    try {
-      const response = await axios.get(url, {
-        responseType: 'arraybuffer',
-        timeout: 60000,
-        httpsAgent, // ✅ רק ה-SSL fix
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
-      
-      console.log(`✓ Downloaded ${(response.data.length / 1024 / 1024).toFixed(2)} MB`);
-      console.log('📦 Decompressing...');
-      
-      const decompressed = zlib.gunzipSync(response.data);
-      console.log(`✓ Decompressed to ${(decompressed.length / 1024 / 1024).toFixed(2)} MB`);
-      
-      return decompressed.toString('utf-8');
-      
-    } catch (error) {
-      if (error.code === 'ECONNABORTED') {
-        throw new Error('Download timeout - file may be too large or connection is slow');
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * בדיקה האם קובץ הוא קובץ מחירים
-   */
-  isPriceFile(name) {
-    const n = name.toLowerCase();
-    return (n.includes('pricefull') || n.includes('price')) && !n.includes('update');
-  }
-
-  /**
-   * חילוץ מזהה חנות מתוך שם הקובץ
-   */
-  extractStoreId(name) {
-    const match = name.match(/-(\d{3,4})-/);
+  extractStoreId(fileName) {
+    const match = fileName.match(/-(\d+)-\d{12}/);
     return match ? match[1] : null;
   }
 
   /**
-   * ניקוי cache (אין session אז אין מה לנקות)
+   * הורדת קובץ מ-Cerberus
+   * כתובות הורדה ישירות פועלות ללא auth (כמו בסקראפר הישן)
+   * עוקף את BaseProvider.downloadFile עם timeout גבוה יותר לקבצים גדולים
    */
+  async downloadFile(url, outputPath, retries = 3) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const writer = fs.createWriteStream(outputPath);
+        const response = await axios({
+          url,
+          method: 'GET',
+          responseType: 'stream',
+          timeout: 120000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+
+        await streamPipeline(response.data, writer);
+        return;
+
+      } catch (e) {
+        try { fs.unlinkSync(outputPath); } catch (_) {}
+
+        if (attempt === retries) {
+          throw new Error(`Download failed after ${retries} attempts: ${e.message}`);
+        }
+
+        const delay = 2000 * attempt;
+        console.log(`⚠️ Attempt ${attempt} failed, retrying in ${delay / 1000}s...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+
   clearCache() {
-    console.log(`🧹 Cache cleared for ${this.config.name}`); 
+    console.log(`🧹 Cache cleared for ${this.config.name}`);
   }
 }
 

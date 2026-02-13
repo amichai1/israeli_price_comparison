@@ -2,13 +2,13 @@
   "name": "israeli-price-scraper",
   "version": "1.0.0",
   "description": "Scraper for Israeli supermarket price transparency data",
-  "main": "master-agent.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node master-agent.js",
-    "upload": "node upload-market-local.js",
-    "upload:final": "node upload-market-final.js",
-    "scrape:rami-levy": "node rami-levy-scraper.js",
-    "populate:sample": "node populate-sample-data.js",
+    "start": "node index.js",
+    "prices": "node index.js pricefull",
+    "stores": "node index.js stores",
+    "promos": "node index.js promofull",
+    "all": "node index.js stores pricefull promofull",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -23,7 +23,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.93.3",
     "axios": "^1.13.4",
-    "cheerio": "^1.2.0",
+    "basic-ftp": "^5.1.0",
     "dotenv": "^16.6.1",
     "p-limit": "^3.1.0",
     "playwright": "^1.58.0",
