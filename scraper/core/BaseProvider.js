@@ -30,7 +30,7 @@ class BaseProvider {
     this.supabase = supabase;
     this.limit = pLimit(2);
     
-    this.downloadDir = path.join(__dirname, '../../downloads');
+    this.downloadDir = path.join(__dirname, '../downloads');
     if (!fs.existsSync(this.downloadDir)) {
       fs.mkdirSync(this.downloadDir, { recursive: true });
     }
