@@ -1,14 +1,9 @@
 // scraper/providers/CerberusProvider.js
 const { Client } = require('basic-ftp');
-const axios = require('axios');
 const fs = require('fs');
-const { pipeline } = require('stream');
-const { promisify } = require('util');
 const { BaseProvider, DOC_TYPES } = require('../core/BaseProvider');
 const StoreProcessor = require('../processors/StoreProcessor');
 const PriceProcessor = require('../processors/PriceProcessor');
-
-const streamPipeline = promisify(pipeline);
 
 // FTP filter pattern per doc type (lowercase, partial match on filename)
 const FILE_PATTERNS = {
@@ -23,7 +18,6 @@ class CerberusProvider extends BaseProvider {
   constructor(config, supabase) {
     super(config, supabase);
     this.ftpHost = 'url.retail.publishedprices.co.il';
-    this.baseDownloadUrl = 'https://url.retail.publishedprices.co.il/file/d';
   }
 
   getProcessor(docType) {
@@ -84,7 +78,7 @@ class CerberusProvider extends BaseProvider {
 
       return filtered.map(f => ({
         fileName: f.name,
-        url: `${this.baseDownloadUrl}/${f.name}`,
+        url: f.name, // משמש כמפתח ייחודי ב-filterFiles
         storeId: this.extractStoreId(f.name),
         date: f.modifiedAt || new Date()
       }));
@@ -109,37 +103,39 @@ class CerberusProvider extends BaseProvider {
   }
 
   /**
-   * הורדת קובץ מ-Cerberus
-   * כתובות הורדה ישירות פועלות ללא auth (כמו בסקראפר הישן)
-   * עוקף את BaseProvider.downloadFile עם timeout גבוה יותר לקבצים גדולים
+   * הורדת קובץ מ-Cerberus דרך FTP ישירות.
+   * עוקף את BaseProvider.downloadFile (שמשתמש ב-HTTP/axios).
+   * הורדה דרך FTP פותרת את בעיית ה-SSL certificate של השרת.
    */
   async downloadFile(url, outputPath, retries = 3) {
+    const fileName = url.split('/').pop(); // תומך גם ב-URL מלא וגם בשם קובץ ישיר
+
     for (let attempt = 1; attempt <= retries; attempt++) {
+      const client = new Client();
       try {
-        const writer = fs.createWriteStream(outputPath);
-        const response = await axios({
-          url,
-          method: 'GET',
-          responseType: 'stream',
-          timeout: 120000,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-          }
+        await client.access({
+          host: this.ftpHost,
+          user: this.config.username || '',
+          password: '',
+          secure: true,
+          secureOptions: { rejectUnauthorized: false }
         });
 
-        await streamPipeline(response.data, writer);
+        await client.downloadTo(outputPath, fileName);
         return;
 
       } catch (e) {
         try { fs.unlinkSync(outputPath); } catch (_) {}
 
         if (attempt === retries) {
-          throw new Error(`Download failed after ${retries} attempts: ${e.message}`);
+          throw new Error(`FTP download failed after ${retries} attempts: ${e.message}`);
         }
 
         const delay = 2000 * attempt;
         console.log(`⚠️ Attempt ${attempt} failed, retrying in ${delay / 1000}s...`);
         await new Promise(r => setTimeout(r, delay));
+      } finally {
+        client.close();
       }
     }
   }
