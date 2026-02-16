@@ -24,11 +24,16 @@ class PriceProcessor extends BaseProcessor {
       const xml = new XmlStream(stream);
       let buffer = [];
 
-      xml.preserve('Item', true);
+      let nodeCount = 0;
+      let normalizedCount = 0;
 
       xml.on('endElement: Item', async (item) => {
+        nodeCount++;
         const normalized = this.normalize(item, externalStoreId);
-        if (normalized) buffer.push(normalized);
+        if (normalized) {
+          normalizedCount++;
+          buffer.push(normalized);
+        }
 
         if (buffer.length >= 1000) {
           xml.pause();
@@ -37,7 +42,7 @@ class PriceProcessor extends BaseProcessor {
             buffer = [];
           } catch (e) {
             console.error('❌ Error saving prices chunk:', e.message);
-            xml.destroy();
+            stream.destroy();
             reject(e);
             return;
           }
@@ -46,9 +51,11 @@ class PriceProcessor extends BaseProcessor {
       });
 
       xml.on('end', async () => {
+        console.log(`📊 ${nodeCount} items parsed, ${buffer.length} remaining in buffer`);
         if (buffer.length > 0) {
           try {
             await this.saveBuffer(buffer);
+            console.log(`💾 Saved ${buffer.length} prices`);
           } catch (e) {
             console.error('❌ Error saving final prices chunk:', e.message);
             reject(e);
@@ -78,7 +85,7 @@ class PriceProcessor extends BaseProcessor {
       item_data: {
         barcode: String(barcode).trim(),
         name: (xmlItem.ItemName || xmlItem.Name || 'Unknown').trim().slice(0, 255),
-        manufacturer_name: xmlItem.ManufacturerName || '',
+        manufacturer_name: (xmlItem.ManufacturerName || '').trim(),
         unit_measure: xmlItem.UnitOfMeasure || ''
       },
       price_data: {
@@ -137,21 +144,20 @@ class PriceProcessor extends BaseProcessor {
       return;
     }
 
-    const prices = buffer.map(b => {
+    // De-duplicate: אם אותו ברקוד מופיע פעמיים באותו batch, שומרים את האחרון
+    const priceMap = new Map();
+    for (const b of buffer) {
       const itemId = this.itemIdCache.get(b.price_data.barcode);
-      
-      if (!itemId) {
-        console.warn(`⚠️ Missing item ID for barcode: ${b.price_data.barcode}`);
-        return null;
-      }
-
-      return {
+      if (!itemId) continue;
+      const key = `${internalStoreId}_${itemId}`;
+      priceMap.set(key, {
         item_id: itemId,
         store_id: internalStoreId,
         price: b.price_data.price,
         last_updated: now
-      };
-    }).filter(p => p !== null);
+      });
+    }
+    const prices = Array.from(priceMap.values());
 
     if (prices.length > 0) {
       await this.saveBatch(prices, 'prices', 'store_id, item_id');

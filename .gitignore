@@ -74,3 +74,6 @@ Thumbs.db
 # Temporary files
 credentials.json
 .expo-shared/
+
+# Scraper downloads
+scraper/downloads/

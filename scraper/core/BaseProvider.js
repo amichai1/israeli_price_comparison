@@ -186,17 +186,19 @@ class BaseProvider {
       console.warn('⚠️ לא נמצאו חנויות פעילות ב-DB לסינון.');
       return [];
     }
-    
+
+    // שומרים רק את הקובץ האחרון לכל סניף (לפי storeId)
     const uniqueMap = new Map();
-    
+
     for (const file of allFiles) {
       if (activeIds.includes(file.storeId)) {
-        if (!uniqueMap.has(file.url)) {
-          uniqueMap.set(file.url, file);
+        const existing = uniqueMap.get(file.storeId);
+        if (!existing || file.date > existing.date) {
+          uniqueMap.set(file.storeId, file);
         }
       }
     }
-    
+
     return Array.from(uniqueMap.values());
   }
 
