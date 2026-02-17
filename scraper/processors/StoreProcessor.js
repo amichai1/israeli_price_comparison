@@ -3,6 +3,60 @@ const fs = require('fs');
 const XmlStream = require('xml-stream');
 const BaseProcessor = require('../core/BaseProcessor');
 
+// כינויים וקיצורים → שם עיר כפי שמופיע ב-DB
+const CITY_ALIASES = {
+  // קיצורים נפוצים
+  'ת"א': 'תל אביב - יפו',
+  'ראשל"צ': 'ראשון לציון',
+  'ראשלצ': 'ראשון לציון',
+  'תל אביב': 'תל אביב - יפו',
+  // וריאציות כתיב
+  'תל אביב-יפו': 'תל אביב - יפו',
+  'תל אביב יפו': 'תל אביב - יפו',
+  'רמת אביב א': 'תל אביב - יפו',
+  'רמת אביב': 'תל אביב - יפו',
+  'קרית גת': 'קריית גת',
+  // שכונות/ישובים ← עיר-אם
+  'גבעת אולגה': 'חדרה',
+  'כרכור': 'פרדס חנה-כרכור',
+  'קריית חיים': 'חיפה',
+  'קרית חיים': 'חיפה',
+  'רעות': 'מודיעין-מכבים-רעות',
+  'מודיעין': 'מודיעין-מכבים-רעות',
+  'שילת': 'מודיעין עילית',
+  'קרית ספר': 'מודיעין עילית',
+  'טבעון': 'קריית טבעון',
+  'עקרון': 'קריית עקרון',
+  'בילו': 'קריית עקרון',
+  'יד אליהו': 'תל אביב - יפו',
+  'מישור אדומים': 'מעלה אדומים',
+  'אשדות יעקב': 'אשדות יעקב (איחוד)',
+  // שמות חלופיים
+  'יהוד': 'יהוד-מונוסון',
+  'יוקנעם': 'יוקנעם עילית',
+  'מעלות': 'מעלות-תרשיחא',
+  'אלנקווה': 'אלקנה',
+  // שמות מתחמים/קניונים
+  'חוצות המפרץ': 'חיפה',
+  'איירפורט סיטי': 'קריית שדה התעופה',
+  'קניון הבאר': 'ראשון לציון',
+  'שער בנימין': 'גבע בנימין',
+  'גוש עציון': 'אלון שבות',
+};
+
+// כינויים ממוינים לפי אורך יורד (longest match first)
+const SORTED_ALIAS_KEYS = Object.keys(CITY_ALIASES).sort((a, b) => b.length - a.length);
+
+// מיפוי ידני לסניפים ללא שדה עיר ושם לא מזוהה
+const STORE_OVERRIDES = {
+  'יוחננוף מפוח': 'רחובות',
+  'יוחננוף ישן': 'רחובות',
+  'אחד העם': 'רחובות',
+  'אקספרס תל חי': 'כפר סבא',
+  'BE אוסישקין': 'רמת השרון',
+  'אקספרס הירדן': 'רמת גן',
+};
+
 class StoreProcessor extends BaseProcessor {
   constructor(supabase, config) {
     super(supabase, config);
@@ -17,7 +71,7 @@ class StoreProcessor extends BaseProcessor {
 
     await this.loadCitiesMap();
 
-    let matched = { cbsCode: 0, internet: 0, fallbackName: 0 };
+    let matched = { cbsCode: 0, cityName: 0, internet: 0, fallbackName: 0 };
     let skipped = 0;
 
     return new Promise((resolve, reject) => {
@@ -51,8 +105,9 @@ class StoreProcessor extends BaseProcessor {
         }
       };
 
-      xml.on('endElement: Store', handleNode);
-      xml.on('endElement: Branch', handleNode);
+      for (const el of this.storeElements) {
+        xml.on(`endElement: ${el}`, handleNode);
+      }
 
       xml.on('end', async () => {
         if (buffer.length > 0) {
@@ -67,7 +122,7 @@ class StoreProcessor extends BaseProcessor {
         }
 
         console.log(`📊 Stores summary: ${totalNodes} parsed, ${totalNodes - skipped} matched, ${skipped} skipped`);
-        console.log(`   ├─ CBS code: ${matched.cbsCode}, Internet: ${matched.internet}, Fallback name: ${matched.fallbackName}`);
+        console.log(`   ├─ CBS code: ${matched.cbsCode}, City name: ${matched.cityName}, Internet: ${matched.internet}, Fallback name: ${matched.fallbackName}`);
         resolve();
       });
 
@@ -76,6 +131,28 @@ class StoreProcessor extends BaseProcessor {
         reject(err);
       });
     });
+  }
+
+  /**
+   * שמות אלמנטים ב-XML — ניתן לדריסה ב-subclass (למשל ['STORE'] עבור SAP XML)
+   */
+  get storeElements() {
+    return ['Store', 'Branch'];
+  }
+
+  /**
+   * חילוץ שדות מאלמנט XML — ניתן לדריסה ב-subclass עבור פורמטים שונים
+   * @returns {{ storeId, storeName, city, storeType, address, subChainId }}
+   */
+  _resolveFields(node) {
+    return {
+      storeId: node.StoreID || node.StoreId || node.BranchId || node.ID,
+      storeName: node.StoreName || node.BranchName || node.Name,
+      city: (node.City || node.CityName || '').toString().trim(),
+      storeType: (node.StoreType || '').toString().trim(),
+      address: node.Address || '',
+      subChainId: node.SubChainId || '0',
+    };
   }
 
   async loadCitiesMap() {
@@ -107,28 +184,43 @@ class StoreProcessor extends BaseProcessor {
   }
 
   normalize(node, matched) {
-    const storeId = node.StoreID || node.StoreId || node.BranchId || node.ID;
-    const storeName = node.StoreName || node.BranchName || node.Name;
-    const rawCity = (node.City || node.CityName || '').toString().trim();
-    const storeType = (node.StoreType || '').toString().trim();
+    const fields = this._resolveFields(node);
+    const { storeId, storeName, city: rawCity, storeType, address, subChainId } = fields;
 
     if (!storeId || !storeName) return null;
+
+    const buildRow = (cityId) => ({
+      chain_id: this.config.id,
+      store_id: storeId.toString(),
+      branch_name: storeName.trim(),
+      address,
+      city_id: cityId,
+      sub_chain_id: subChainId,
+      raw_city_name: rawCity || null,
+    });
 
     // שלב 1: זיהוי חנויות אינטרנט לפי StoreType
     if (storeType === '2') {
       const internetId = this.cityNameMap.get('Internet');
       if (internetId) {
         matched.internet++;
-        return this._buildStoreRow(storeId, storeName, node, internetId, rawCity);
+        return buildRow(internetId);
       }
     }
 
-    // שלב 2: חיפוש לפי קוד למ"ס (רמי לוי, אושר עד — City מכיל קוד מספרי)
     if (rawCity && rawCity !== '0') {
-      const cityId = this.cbsCodeMap.get(rawCity);
-      if (cityId) {
+      // שלב 2: חיפוש לפי קוד למ"ס (רמי לוי, אושר עד — City מכיל קוד מספרי)
+      const cbsId = this.cbsCodeMap.get(rawCity);
+      if (cbsId) {
         matched.cbsCode++;
-        return this._buildStoreRow(storeId, storeName, node, cityId, rawCity);
+        return buildRow(cbsId);
+      }
+
+      // שלב 2.5: חיפוש לפי שם עיר (שופרסל — CITY מכיל שם עיר בעברית)
+      const cityNameId = this._matchCityByName(rawCity);
+      if (cityNameId) {
+        matched.cityName++;
+        return buildRow(cityNameId);
       }
     }
 
@@ -136,7 +228,7 @@ class StoreProcessor extends BaseProcessor {
     const cityId = this._extractCityFromText(storeName);
     if (cityId) {
       matched.fallbackName++;
-      return this._buildStoreRow(storeId, storeName, node, cityId, rawCity);
+      return buildRow(cityId);
     }
 
     // לא הצלחנו לזהות עיר
@@ -162,31 +254,100 @@ class StoreProcessor extends BaseProcessor {
   }
 
   /**
-   * בניית אובייקט store row (DRY)
+   * התאמת שם עיר עם נורמליזציה — מקפים, קיצורים, שגיאות כתיב
+   * @returns {number|null} city_id או null
    */
-  _buildStoreRow(storeId, storeName, node, cityId, rawCity) {
-    return {
-      chain_id: this.config.id,
-      store_id: storeId.toString(),
-      branch_name: storeName.trim(),
-      address: node.Address || '',
-      city_id: cityId,
-      sub_chain_id: node.SubChainId || '0',
-      raw_city_name: rawCity || null,
-    };
+  _matchCityByName(rawCity) {
+    // 1. exact match
+    let id = this.cityNameMap.get(rawCity);
+    if (id) return id;
+
+    // 2. נורמליזציה (מקפים, כתיב, קיצורים)
+    const normalized = this._normalizeCityName(rawCity);
+    if (normalized !== rawCity) {
+      id = this.cityNameMap.get(normalized);
+      if (id) return id;
+    }
+
+    // 3. prefix match: "תל אביב" → "תל אביב - יפו"
+    id = this._findCityStartingWith(rawCity);
+    if (id) return id;
+
+    // 4. prefix match על השם המנורמל
+    if (normalized !== rawCity) {
+      id = this._findCityStartingWith(normalized);
+      if (id) return id;
+    }
+
+    return null;
   }
 
   /**
-   * חיפוש שם עיר מוכר בתוך מחרוזת (longest match first)
+   * נורמליזציה של שם עיר — מקפים, שגיאות כתיב, קיצורים
+   */
+  _normalizeCityName(name) {
+    if (!name) return name;
+
+    // קיצורים וכינויים (lookup ישיר)
+    if (CITY_ALIASES[name]) return CITY_ALIASES[name];
+
+    // מקפים → רווחים (באר-שבע → באר שבע)
+    let normalized = name.replace(/-/g, ' ');
+
+    // "קרית" → "קריית" (שגיאת כתיב נפוצה)
+    normalized = normalized.replace(/^קרית /, 'קריית ');
+
+    // "פתח תקוה" / "פתחתקוה" → "פתח תקווה"
+    normalized = normalized.replace(/^פתח ?תקוה$/, 'פתח תקווה');
+
+    return normalized;
+  }
+
+  /**
+   * חיפוש עיר שמתחילה עם הטקסט הנתון (למשל "תל אביב" → "תל אביב - יפו")
    * @returns {number|null} city_id או null
    */
-  _extractCityFromText(text) {
+  _findCityStartingWith(text) {
     if (!text) return null;
     for (const cityName of this.sortedCityNames) {
-      if (cityName === 'Internet') continue; // לא לחפש "Internet" בתוך שמות סניפים
+      if (cityName === 'Internet') continue;
+      if (cityName.startsWith(text) && cityName !== text) {
+        return this.cityNameMap.get(cityName);
+      }
+    }
+    return null;
+  }
+
+  _extractCityFromText(text) {
+    if (!text) return null;
+    // שלב 1: חיפוש ישיר של שם עיר בתוך הטקסט
+    for (const cityName of this.sortedCityNames) {
+      if (cityName === 'Internet') continue;
       if (text.includes(cityName)) {
         return this.cityNameMap.get(cityName);
       }
+    }
+    // שלב 2: נורמליזציה (למשל "קרית שמונה" → "קריית שמונה")
+    const normalized = this._normalizeCityName(text);
+    if (normalized !== text) {
+      for (const cityName of this.sortedCityNames) {
+        if (cityName === 'Internet') continue;
+        if (normalized.includes(cityName)) {
+          return this.cityNameMap.get(cityName);
+        }
+      }
+    }
+    // שלב 3: חיפוש כינויים בתוך הטקסט (ממוין לפי אורך יורד)
+    for (const alias of SORTED_ALIAS_KEYS) {
+      if (text.includes(alias)) {
+        const id = this.cityNameMap.get(CITY_ALIASES[alias]);
+        if (id) return id;
+      }
+    }
+    // שלב 4: מיפוי ידני לפי שם סניף מדויק
+    const override = STORE_OVERRIDES[text.trim()];
+    if (override) {
+      return this.cityNameMap.get(override);
     }
     return null;
   }

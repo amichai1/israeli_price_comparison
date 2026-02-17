@@ -1,6 +1,7 @@
 require('dotenv').config({ path: './.env' });
 const { createClient } = require('@supabase/supabase-js');
 const CerberusProvider = require('./providers/CerberusProvider');
+const ShufersalProvider = require('./providers/ShufersalProvider');
 const { DOC_TYPES } = require('./core/BaseProvider');
 
 // --- 1. Configuration ---
@@ -16,7 +17,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 // --- 2. Provider Registry ---
 const PROVIDERS = {
   cerberus: CerberusProvider,
-  // 'shufersal': ShufersalProvider, // Future integration
+  shufersal: ShufersalProvider,
 };
 
 function getProvider(chain) {
@@ -80,7 +81,7 @@ async function main() {
     const { data: chains, error } = await supabase
       .from('chains')
       .select('*')
-      .eq('scraper_type', 'cerberus')
+      .in('scraper_type', ['cerberus', 'shufersal'])
       .order('name');
 
     if (error) throw error;
