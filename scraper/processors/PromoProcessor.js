@@ -242,8 +242,8 @@ class PromoProcessor extends BaseProcessor {
       }
     }
 
-    // שלב 3: Upsert פריטי מבצע
-    const promoItemRows = [];
+    // שלב 3: Upsert פריטי מבצע (עם דדופליקציה לפי conflict key)
+    const promoItemMap = new Map();
     let skippedNoPromo = 0;
     let skippedNoItem = 0;
     for (const { promoData, items } of buffer) {
@@ -254,18 +254,22 @@ class PromoProcessor extends BaseProcessor {
         const itemId = this.itemIdCache.get(item.barcode);
         if (!itemId) { skippedNoItem++; continue; }
 
-        promoItemRows.push({
-          promotion_id: internalPromoId,
-          item_id: itemId,
-          group_id: item.group_id,
-          reward_type: item.reward_type,
-          min_qty: item.min_qty,
-          discount_rate: item.discount_rate,
-          discounted_price: item.discounted_price,
-          is_weighted: item.is_weighted
-        });
+        const key = `${internalPromoId}_${itemId}_${item.group_id}`;
+        if (!promoItemMap.has(key)) {
+          promoItemMap.set(key, {
+            promotion_id: internalPromoId,
+            item_id: itemId,
+            group_id: item.group_id,
+            reward_type: item.reward_type,
+            min_qty: item.min_qty,
+            discount_rate: item.discount_rate,
+            discounted_price: item.discounted_price,
+            is_weighted: item.is_weighted
+          });
+        }
       }
     }
+    const promoItemRows = [...promoItemMap.values()];
 
     console.log(`[PROMO] Step 3: ${promoItemRows.length} promotion_items to save, skipped: ${skippedNoPromo} (no promo ID), ${skippedNoItem} (no item ID)`);
 
