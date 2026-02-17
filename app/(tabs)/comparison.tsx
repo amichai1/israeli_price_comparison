@@ -23,7 +23,7 @@ export default function ComparisonScreen() {
   const colors = useColors();
   const router = useRouter();
   const { basket } = useBasket();
-  const { selectedCity } = useCity();
+  const { selectedCityId, selectedCityName } = useCity();
   const [loading, setLoading] = useState(true);
   const [comparisons, setComparisons] = useState<StoreComparison[]>([]);
   const [selectedStore, setSelectedStore] = useState<StoreComparison | null>(null);
@@ -31,7 +31,7 @@ export default function ComparisonScreen() {
 
   useEffect(() => {
     loadComparison();
-  }, [basket, selectedCity]);
+  }, [basket, selectedCityId]);
 
   const loadComparison = async () => {
     setLoading(true);
@@ -43,7 +43,7 @@ export default function ComparisonScreen() {
       }
 
       const itemIds = basket.map((item: any) => item.id);
-      const results = await getPriceComparison(itemIds, selectedCity);
+      const results = await getPriceComparison(itemIds, selectedCityId ?? undefined);
       setComparisons(results);
     } catch (error) {
       console.error("Error loading comparison:", error);
@@ -254,7 +254,7 @@ export default function ComparisonScreen() {
             Price Comparison
           </Text>
           <Text className="text-base text-muted mt-1">
-            {selectedCity} • Tap a store to see details
+            {selectedCityName} • Tap a store to see details
           </Text>
         </View>
       </View>

@@ -11,12 +11,14 @@ export interface Item {
 
 export interface Store {
   id: number;
-  chain_name: string;
+  chain_id: number;
+  city_id: number;
   branch_name: string | null;
-  city: string | null;
   address?: string | null;
-  created_at?: string;
-  updated_at?: string;
+  store_id?: string;
+  sub_chain_id?: string;
+  chains?: { name: string };
+  cities?: { name: string };
 }
 
 export interface Price {

@@ -36,14 +36,36 @@ export async function searchProducts(query: string): Promise<Item[]> {
 }
 
 /**
- * Get all stores
+ * Get all cities from the database
+ */
+export async function getCities(): Promise<{ id: number; name: string }[]> {
+  try {
+    const { data, error } = await supabase
+      .from("cities")
+      .select("id, name")
+      .order("name");
+
+    if (error) {
+      console.error("Get cities error:", error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error("Get cities exception:", error);
+    return [];
+  }
+}
+
+/**
+ * Get all stores with chain and city names
  */
 export async function getStores(): Promise<Store[]> {
   try {
     const { data, error } = await supabase
       .from("stores")
-      .select("*")
-      .order("chain_name");
+      .select("*, chains(name), cities(name)")
+      .order("branch_name");
 
     if (error) {
       console.error("Get stores error:", error);
@@ -60,78 +82,91 @@ export async function getStores(): Promise<Store[]> {
 /**
  * Get price comparison for a basket of items
  * @param itemIds - Array of item IDs to compare
- * @param city - Optional city filter (e.g., 'Petah Tikva')
+ * @param cityId - Optional city ID filter
  */
-export async function getPriceComparison(itemIds: number[], city?: string): Promise<StoreComparison[]> {
+export async function getPriceComparison(itemIds: number[], cityId?: number): Promise<StoreComparison[]> {
   try {
-    // Get all prices for the basket items
-    const { data: prices, error: pricesError } = await supabase
+    // שאילתת prices עם join לחנויות, רשתות וערים
+    let query = supabase
       .from("prices")
       .select(`
         item_id,
         price,
         store_id,
-        stores (
+        stores!inner (
           id,
-          chain_name,
-          branch_name
+          branch_name,
+          chain_id,
+          city_id,
+          chains (name),
+          cities (name)
         ),
-        items (
-          name
-        )
+        items (name)
       `)
       .in("item_id", itemIds);
+
+    if (cityId) {
+      query = query.eq("stores.city_id", cityId);
+    }
+
+    const { data: prices, error: pricesError } = await query;
 
     if (pricesError) {
       console.error("Price comparison error:", pricesError);
       return [];
     }
 
-    // Get all stores (filtered by city if provided)
-    let storesQuery = supabase
-      .from("stores")
-      .select("*");
-    
-    if (city) {
-      storesQuery = storesQuery.eq("city", city);
-    }
-    
-    const { data: stores, error: storesError } = await storesQuery;
+    if (!prices || prices.length === 0) return [];
 
-    if (storesError) {
-      console.error("Get stores error:", storesError);
-      return [];
-    }
+    // קיבוץ prices לפי store
+    const storeMap = new Map<number, {
+      store_id: number;
+      chain_name: string;
+      branch_name: string | null;
+      prices: { item_id: number; price: number }[];
+    }>();
 
-    if (!stores || !prices) return [];
-
-    // Get all items to find missing ones
-    const { data: items, error: itemsError } = await supabase
-      .from("items")
-      .select("*")
-      .in("id", itemIds);
-
-    if (itemsError) {
-      console.error("Get items error:", itemsError);
-      return [];
+    for (const p of prices as any[]) {
+      const sid = p.store_id;
+      if (!storeMap.has(sid)) {
+        storeMap.set(sid, {
+          store_id: p.stores.id,
+          chain_name: p.stores.chains?.name || '',
+          branch_name: p.stores.branch_name,
+          prices: [],
+        });
+      }
+      storeMap.get(sid)!.prices.push({ item_id: p.item_id, price: parseFloat(p.price) });
     }
 
-    // Calculate totals per store
-    const comparisons: StoreComparison[] = stores.map((store) => {
-      const storePrices = prices.filter((p: any) => p.store_id === store.id);
-      const totalPrice = storePrices.reduce((sum: number, p: any) => sum + parseFloat(p.price), 0);
+    // שמות הפריטים למציאת חסרים
+    const itemNameMap = new Map<number, string>();
+    for (const p of prices as any[]) {
+      if (p.items?.name && !itemNameMap.has(p.item_id)) {
+        itemNameMap.set(p.item_id, p.items.name);
+      }
+    }
+    // אם יש פריטים שלא נמצאו ב-prices, נביא אותם בנפרד
+    const missingNameIds = itemIds.filter((id) => !itemNameMap.has(id));
+    if (missingNameIds.length > 0) {
+      const { data: missingItems } = await supabase
+        .from("items")
+        .select("id, name")
+        .in("id", missingNameIds);
+      for (const item of missingItems || []) {
+        itemNameMap.set(item.id, item.name);
+      }
+    }
 
-      // Find missing items
-      const foundItemIds = storePrices.map((p: any) => p.item_id);
+    // בניית StoreComparison מכל store
+    const comparisons: StoreComparison[] = Array.from(storeMap.values()).map((store) => {
+      const totalPrice = store.prices.reduce((sum, p) => sum + p.price, 0);
+      const foundItemIds = store.prices.map((p) => p.item_id);
       const missingItemIds = itemIds.filter((id) => !foundItemIds.includes(id));
-
-      // Get missing item names
-      const missingItems = (items || [])
-        .filter((item: any) => missingItemIds.includes(item.id))
-        .map((item: any) => item.name);
+      const missingItems = missingItemIds.map((id) => itemNameMap.get(id) || `Item ${id}`);
 
       return {
-        store_id: store.id,
+        store_id: store.store_id,
         chain_name: store.chain_name,
         branch_name: store.branch_name,
         total_price: totalPrice,

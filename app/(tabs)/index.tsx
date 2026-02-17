@@ -21,7 +21,7 @@ import { Item } from "@/types";
 
 export default function SearchScreen() {
   const colors = useColors();
-  const { selectedCity, setSelectedCity, availableCities } = useCity();
+  const { selectedCityId, selectedCityName, setSelectedCity, availableCities } = useCity();
   const { basket, addItem, isInBasket } = useBasket();
   const [searchQuery, setSearchQuery] = useState("");
   const [results, setResults] = useState<Item[]>([]);
@@ -176,7 +176,7 @@ export default function SearchScreen() {
           activeOpacity={0.7}
           className="bg-surface border border-border rounded-xl px-4 py-3 flex-row justify-between items-center"
         >
-          <Text className="text-foreground font-medium">{selectedCity}</Text>
+          <Text className="text-foreground font-medium">{selectedCityName}</Text>
           <IconSymbol
             name="chevron.down"
             size={20}
@@ -188,7 +188,7 @@ export default function SearchScreen() {
           <View className="mt-2 bg-surface border border-border rounded-xl overflow-hidden">
             {availableCities.map((city) => (
               <TouchableOpacity
-                key={city}
+                key={city.id}
                 onPress={() => {
                   setSelectedCity(city);
                   setShowCityPicker(false);
@@ -198,15 +198,15 @@ export default function SearchScreen() {
                 }}
                 activeOpacity={0.7}
                 className={`px-4 py-3 border-b border-border ${
-                  city === selectedCity ? "bg-primary/10" : ""
+                  city.id === selectedCityId ? "bg-primary/10" : ""
                 }`}
               >
                 <Text
                   className={`font-medium ${
-                    city === selectedCity ? "text-primary" : "text-foreground"
+                    city.id === selectedCityId ? "text-primary" : "text-foreground"
                   }`}
                 >
-                  {city}
+                  {city.name}
                 </Text>
               </TouchableOpacity>
             ))}

@@ -1,40 +1,70 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getCities } from '@/lib/supabase-service';
 
 const CITY_STORAGE_KEY = '@selected_city';
-const DEFAULT_CITY = 'Petah Tikva';
+
+interface City {
+  id: number;
+  name: string;
+}
 
 interface CityContextType {
-  selectedCity: string;
-  setSelectedCity: (city: string) => void;
-  availableCities: string[];
+  selectedCityId: number | null;
+  selectedCityName: string;
+  setSelectedCity: (city: City) => void;
+  availableCities: City[];
+  loading: boolean;
 }
 
 const CityContext = createContext<CityContextType | undefined>(undefined);
 
 export function CityProvider({ children }: { children: ReactNode }) {
-  const [selectedCity, setSelectedCityState] = useState<string>(DEFAULT_CITY);
-  const availableCities = ['Petah Tikva', 'Jerusalem', 'Tel Aviv', 'Haifa', 'Ramat Gan'];
+  const [selectedCity, setSelectedCityState] = useState<City | null>(null);
+  const [availableCities, setAvailableCities] = useState<City[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Load selected city from storage on mount
+  // טעינת ערים מ-DB + עיר שמורה מ-AsyncStorage
   useEffect(() => {
-    loadSelectedCity();
+    loadCities();
   }, []);
 
-  const loadSelectedCity = async () => {
+  const loadCities = async () => {
     try {
+      const cities = await getCities();
+      setAvailableCities(cities);
+
+      // טעינת עיר שמורה
       const stored = await AsyncStorage.getItem(CITY_STORAGE_KEY);
       if (stored) {
-        setSelectedCityState(stored);
+        try {
+          const parsed: City = JSON.parse(stored);
+          // וידוא שהעיר עדיין קיימת ב-DB
+          if (cities.some((c) => c.id === parsed.id)) {
+            setSelectedCityState(parsed);
+          } else if (cities.length > 0) {
+            setSelectedCityState(cities[0]);
+          }
+        } catch {
+          // אם ה-stored value ישן (string), נתעלם ממנו
+          if (cities.length > 0) {
+            setSelectedCityState(cities[0]);
+          }
+        }
+      } else if (cities.length > 0) {
+        // ברירת מחדל: העיר הראשונה ברשימה
+        setSelectedCityState(cities[0]);
       }
     } catch (error) {
-      console.error('Error loading selected city:', error);
+      console.error('Error loading cities:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const setSelectedCity = async (city: string) => {
+  const setSelectedCity = async (city: City) => {
     try {
-      await AsyncStorage.setItem(CITY_STORAGE_KEY, city);
+      await AsyncStorage.setItem(CITY_STORAGE_KEY, JSON.stringify(city));
       setSelectedCityState(city);
     } catch (error) {
       console.error('Error saving selected city:', error);
@@ -42,7 +72,15 @@ export function CityProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <CityContext.Provider value={{ selectedCity, setSelectedCity, availableCities }}>
+    <CityContext.Provider
+      value={{
+        selectedCityId: selectedCity?.id ?? null,
+        selectedCityName: selectedCity?.name ?? '',
+        setSelectedCity,
+        availableCities,
+        loading,
+      }}
+    >
       {children}
     </CityContext.Provider>
   );
