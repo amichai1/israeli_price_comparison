@@ -11,6 +11,7 @@ Downloads and processes XML price data from Israeli supermarket chains via FTP, 
 - **BaseProcessor** - Shared database save logic with batched upserts.
 - **StoreProcessor** - Parses store XML files, maps city names to the `cities` table, and upserts store records.
 - **PriceProcessor** - Parses price XML files using streaming (xml-stream), upserts items, and inserts/updates prices. Includes an in-memory cache for item and store ID lookups.
+- **PromoProcessor** - Parses promotion XML files, upserts promotions and promotion_items. Handles deduplication of barcodes within a single promotion.
 
 ### Flow
 
@@ -35,8 +36,8 @@ All chains currently use the Cerberus platform (FTP-based):
 | Stores | Supported | Store locations and metadata |
 | PriceFull | Supported | Full price list for a store |
 | PriceUpdate | Supported | Incremental price changes |
-| PromoFull | Planned | Full promotions list |
-| PromoUpdate | Planned | Incremental promotion changes |
+| PromoFull | Supported | Full promotions list |
+| PromoUpdate | Supported | Incremental promotion changes |
 
 ## Usage
 
@@ -47,6 +48,9 @@ node index.js              # default: PriceFull
 node index.js stores       # update store data
 node index.js pricefull    # full price update
 node index.js price        # incremental price update
+node index.js promofull    # full promotions update
+node index.js promo        # incremental promotions update
+node index.js pricefull promofull  # multiple types in sequence
 ```
 
 ## Environment Variables
@@ -76,10 +80,10 @@ scraper/
 │   └── CerberusProvider.js  # FTP-based provider for Cerberus chains
 ├── processors/
 │   ├── StoreProcessor.js    # Store XML parser
-│   └── PriceProcessor.js    # Price XML parser with streaming
+│   ├── PriceProcessor.js    # Price XML parser with streaming
+│   └── PromoProcessor.js    # Promotion XML parser
 ├── utils/
 │   └── TelegramClient.js    # Telegram notification client
-├── old-scraper/             # Legacy scraper (to be removed)
 ├── index.js                 # CLI entry point
 ├── package.json
 └── README.md

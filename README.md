@@ -5,7 +5,7 @@ A mobile application for comparing grocery prices across major Israeli supermark
 ## Overview
 
 - **Frontend**: React Native + Expo (TypeScript)
-- **Backend**: Supabase (PostgreSQL)
+- **Backend**: Supabase (PostgreSQL) — cities, chains, stores, items, prices, promotions
 - **Scraper**: Node.js service that downloads and processes XML price data from supermarket chains via FTP
 
 ## Features
@@ -31,8 +31,8 @@ The scraper currently supports Cerberus-based chains via FTP:
 | Stores | Supported |
 | PriceFull | Supported |
 | PriceUpdate | Supported |
-| PromoFull | Planned |
-| PromoUpdate | Planned |
+| PromoFull | Supported |
+| PromoUpdate | Supported |
 
 ## Project Structure
 
@@ -43,13 +43,12 @@ israeli_price_comparison/
 ├── lib/                    # Utilities and services
 ├── types/                  # TypeScript type definitions
 ├── database/
-│   └── schema.sql          # PostgreSQL schema
+│   └── schema.sql          # PostgreSQL schema (cities, chains, stores, items, prices, promotions)
 ├── scraper/
 │   ├── core/               # BaseProvider, BaseProcessor
 │   ├── providers/          # CerberusProvider (FTP-based chains)
-│   ├── processors/         # StoreProcessor, PriceProcessor
+│   ├── processors/         # StoreProcessor, PriceProcessor, PromoProcessor
 │   ├── utils/              # TelegramClient
-│   ├── old-scraper/        # Legacy scraper (to be removed)
 │   └── index.js            # CLI entry point
 └── README.md
 ```
@@ -101,6 +100,9 @@ node index.js              # default: PriceFull
 node index.js stores       # update store data
 node index.js pricefull    # full price update
 node index.js price        # incremental price update
+node index.js promofull    # full promotions update
+node index.js promo        # incremental promotions update
+node index.js pricefull promofull  # multiple types in sequence
 ```
 
 See `scraper/README.md` for detailed scraper documentation.

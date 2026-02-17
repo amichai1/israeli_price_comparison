@@ -1,15 +1,23 @@
 name: Supermarket Scraper Run
 
 on:
-  
-#  schedule:
-#    - cron: '0 3 * * *'
+  schedule:
+    # Daily: prices + promotions (every day at 03:00 UTC)
+    - cron: '0 3 * * *'
+    # Monthly: store data (1st of each month at 02:00 UTC)
+    - cron: '0 2 1 * *'
   workflow_dispatch:
+    inputs:
+      doc_types:
+        description: 'Document types to scrape (e.g. "pricefull promofull", "stores")'
+        required: false
+        default: 'pricefull promofull'
 
 jobs:
-  scrape_and_upload:
+  daily:
+    if: github.event.schedule != '0 2 1 * *'
     runs-on: ubuntu-latest
-    
+
     defaults:
       run:
         working-directory: scraper
@@ -22,32 +30,46 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # מטמון מובנה ל-npm. מצריך נתיב לקובץ ה-lock בגלל תיקיית ה-scraper
           cache: 'npm'
           cache-dependency-path: scraper/package-lock.json
-
-      - name: Cache Playwright Browsers
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          # המפתח מבוסס על מערכת ההפעלה וגרסת הפליירייט ב-lockfile
-          key: ${{ runner.os }}-playwright-${{ hashFiles('scraper/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
 
       - name: Install Dependencies
         run: npm install
 
-      - name: Install Playwright Browsers
-        # הפקודה תרוץ רק אם לא נמצא מטמון מתאים (התניה של השלב הקודם)
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
-
-      - name: Run Master Agent
+      - name: Run Scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: npm start
+        run: node index.js ${{ github.event.inputs.doc_types || 'pricefull promofull' }}
+
+  monthly-stores:
+    if: github.event.schedule == '0 2 1 * *'
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: scraper
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: scraper/package-lock.json
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Update Stores
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node index.js stores

@@ -1,88 +1,148 @@
 # Database Setup Guide
 
-This document explains how to set up the Supabase database for the Israeli Supermarket Price Comparison app.
+This document explains the Supabase (PostgreSQL) database structure for the Israeli Supermarket Price Comparison app.
 
 ## Overview
 
-The application uses **Supabase** (PostgreSQL) as the backend database to store product information, store details, and price data from Israeli supermarket chains.
+The database stores product information, store details, price data, and promotions from Israeli supermarket chains. All tables are defined in `schema.sql` — it is the single source of truth for the DB schema.
 
-## Database Schema
+## Tables
 
-The database consists of three main tables:
+### 1. cities
 
-### 1. Items Table
+Manages scan regions. Each city has an optional CBS code (`cbs_code`) used to match city names from Cerberus XML files.
 
-Stores product information with unique barcodes.
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | BIGINT (identity) | Primary key |
+| `name` | TEXT | City name (unique) |
+| `cbs_code` | TEXT | CBS code (nullable — NULL for virtual cities like "Internet") |
+| `is_active` | BOOLEAN | Whether to scan this city |
+| `created_at` | TIMESTAMPTZ | Record creation time |
+
+### 2. chains
+
+Scraper configuration per chain — credentials, platform type, and portal URL.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | BIGINT (identity) | Primary key |
+| `name` | TEXT | Chain name (e.g. Rami Levy) |
+| `chain_code` | TEXT | Official chain code (unique) |
+| `scraper_type` | TEXT | Platform type: cerberus, shufersal, etc. |
+| `username` | TEXT | Portal username (nullable) |
+| `base_url` | TEXT | Portal URL |
+| `created_at` | TIMESTAMPTZ | Record creation time |
+
+### 3. stores
+
+Branch information, linked to a chain and city via foreign keys.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | SERIAL | Primary key |
-| `barcode` | VARCHAR(50) | Unique product barcode (EAN-13, etc.) |
+| `chain_id` | BIGINT (FK) | References `chains.id` |
+| `city_id` | BIGINT (FK) | References `cities.id` |
+| `branch_name` | VARCHAR | Branch name |
+| `address` | TEXT | Full address |
+| `sub_chain_id` | TEXT | Sub-chain code |
+| `store_id` | TEXT | Store identifier from source file |
+| `raw_city_name` | TEXT | Original city name from source |
+| `created_at` | TIMESTAMP | Record creation time |
+| `updated_at` | TIMESTAMP | Last update time |
+
+**Constraints:** `UNIQUE(chain_id, store_id)`
+**Indexes:** `idx_stores_lookup` on `(chain_id, city_id)`
+
+### 4. items
+
+Product catalog with unique barcodes.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SERIAL | Primary key |
+| `barcode` | VARCHAR(50) | Unique product barcode |
 | `name` | VARCHAR(255) | Product name |
-| `unit_measure` | VARCHAR(50) | Unit of measurement (kg, liter, piece, etc.) |
-| `created_at` | TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | Last update timestamp |
+| `unit_measure` | VARCHAR(50) | Unit of measurement |
+| `manufacturer_name` | TEXT | Manufacturer name |
+| `created_at` | TIMESTAMP | Record creation time |
+| `updated_at` | TIMESTAMP | Last update time |
 
-**Indexes:**
-- `idx_items_barcode` on `barcode` for fast lookups
-- `idx_items_name` on `name` for search functionality
+### 5. prices
 
-### 2. Stores Table
-
-Stores supermarket chain and branch information.
+Price per item per store. Updated by the scraper.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | SERIAL | Primary key |
-| `chain_name` | VARCHAR(100) | Supermarket chain name (Rami Levy, Osher Ad, etc.) |
-| `branch_name` | VARCHAR(255) | Specific branch name |
-| `city` | VARCHAR(100) | City location |
-| `address` | TEXT | Full address (optional) |
-| `created_at` | TIMESTAMP | Record creation timestamp |
-| `updated_at` | TIMESTAMP | Last update timestamp |
+| `item_id` | INTEGER (FK) | References `items.id` |
+| `store_id` | INTEGER (FK) | References `stores.id` |
+| `price` | DECIMAL(10,2) | Price in NIS |
+| `last_updated` | TIMESTAMP | When this price was last seen |
 
-**Indexes:**
-- `idx_stores_chain_name` on `chain_name` for filtering
-- `idx_stores_city` on `city` for location-based queries
+**Constraints:** `UNIQUE(item_id, store_id)`
 
-### 3. Prices Table
+### 6. promotions
 
-Stores price information for items at specific stores.
+Promotions per store. The same `promotion_id` can appear across multiple stores.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | SERIAL | Primary key |
-| `item_id` | INTEGER | Foreign key to `items.id` |
-| `store_id` | INTEGER | Foreign key to `stores.id` |
-| `price` | DECIMAL(10, 2) | Price in Israeli Shekels (₪) |
-| `last_updated` | TIMESTAMP | When this price was last updated |
+| `id` | BIGINT (identity) | Primary key |
+| `store_id` | BIGINT (FK) | References `stores.id` |
+| `promotion_id` | TEXT | Promotion ID from XML |
+| `description` | TEXT | Promotion description |
+| `start_date` | TIMESTAMPTZ | Start date |
+| `end_date` | TIMESTAMPTZ | End date |
+| `club_id` | TEXT | "0" = everyone, other = club members |
+| `min_qty` | INTEGER | Minimum quantity |
+| `allow_multiple` | BOOLEAN | Allow multiple discounts |
+| `last_updated` | TIMESTAMPTZ | Last update time |
 
-**Constraints:**
-- `UNIQUE(item_id, store_id)` - One price per item per store
-- Foreign key cascades on delete
+**Constraints:** `UNIQUE(store_id, promotion_id)`
 
-**Indexes:**
-- `idx_prices_item_id` on `item_id` for fast price lookups
-- `idx_prices_store_id` on `store_id` for store-based queries
-- `idx_prices_item_store` composite index for efficient price comparison
-- `idx_prices_last_updated` for freshness checks
+### 7. promotion_items
+
+Links promotions to items with discount details.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | BIGINT (identity) | Primary key |
+| `promotion_id` | BIGINT (FK) | References `promotions.id` |
+| `item_id` | BIGINT (FK) | References `items.id` |
+| `group_id` | TEXT | Group ID from XML |
+| `reward_type` | TEXT | "1" = discount, "2" = gift |
+| `min_qty` | REAL | Minimum quantity to purchase |
+| `discount_rate` | REAL | Discount amount in NIS |
+| `discounted_price` | REAL | Price after discount |
+| `is_weighted` | BOOLEAN | Weighted item flag |
+
+**Constraints:** `UNIQUE(promotion_id, item_id, group_id)`
 
 ## Views
 
+### price_comparison
+
+All prices for all items across all stores — used for comparison tables.
+
+```sql
+SELECT * FROM price_comparison WHERE barcode = '7290000000000';
+```
+
 ### cheapest_prices
 
-Returns the cheapest price for each item across all stores.
+Cheapest price per item across all stores.
 
 ```sql
 SELECT * FROM cheapest_prices WHERE barcode = '7290000000000';
 ```
 
-### price_comparison
+### active_promotions
 
-Returns all prices for all items across all stores, useful for comparison tables.
+Currently active promotions with item, store, and chain details.
 
 ```sql
-SELECT * FROM price_comparison WHERE item_id = 123;
+SELECT * FROM active_promotions WHERE barcode = '7290000000000';
 ```
 
 ## Setup Instructions
@@ -93,7 +153,7 @@ SELECT * FROM price_comparison WHERE item_id = 123;
 2. Create a new project
 3. Note your project URL and API keys
 
-### 2. Run Schema Migration
+### 2. Run Schema
 
 1. Open the Supabase SQL Editor
 2. Copy the contents of `schema.sql`
@@ -101,8 +161,6 @@ SELECT * FROM price_comparison WHERE item_id = 123;
 4. Verify tables are created in the Table Editor
 
 ### 3. Configure Environment Variables
-
-Add these to your app's environment configuration:
 
 ```env
 SUPABASE_URL=https://your-project.supabase.co
@@ -112,62 +170,31 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 **Note:** The service role key is only needed for the scraper (server-side). The mobile app uses the anon key.
 
-### 4. Enable Row Level Security (Optional)
-
-For production deployments, enable RLS policies:
-
-```sql
--- Enable RLS on all tables
-ALTER TABLE items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE stores ENABLE ROW LEVEL SECURITY;
-ALTER TABLE prices ENABLE ROW LEVEL SECURITY;
-
--- Allow public read access
-CREATE POLICY "Allow public read on items" ON items FOR SELECT USING (true);
-CREATE POLICY "Allow public read on stores" ON stores FOR SELECT USING (true);
-CREATE POLICY "Allow public read on prices" ON prices FOR SELECT USING (true);
-
--- Restrict write access to service role only
-CREATE POLICY "Service role only for items" ON items FOR ALL USING (auth.role() = 'service_role');
-CREATE POLICY "Service role only for stores" ON stores FOR ALL USING (auth.role() = 'service_role');
-CREATE POLICY "Service role only for prices" ON prices FOR ALL USING (auth.role() = 'service_role');
-```
-
-## Sample Data
-
-The schema includes sample stores for the four major Israeli chains:
-
-- **Rami Levy** - Jerusalem Center
-- **Osher Ad** - Tel Aviv
-- **Yohananof** - Haifa
-- **Shufersal** - Deal Ramat Gan
-
 ## API Usage Examples
 
 ### Search Products
 
 ```typescript
-const { data, error } = await supabase
+const { data } = await supabase
   .from('items')
   .select('*')
   .ilike('name', `%${searchQuery}%`)
   .limit(20);
 ```
 
-### Get Price Comparison for Basket
+### Get Price Comparison
 
 ```typescript
-const itemIds = [1, 2, 3, 4, 5]; // Basket item IDs
-
-const { data, error } = await supabase
+const { data } = await supabase
   .from('prices')
   .select(`
     item_id,
     price,
     store_id,
     stores (
-      chain_name,
-      branch_name
+      branch_name,
+      chain_id,
+      chains ( name )
     ),
     items (
       name,
@@ -177,55 +204,15 @@ const { data, error } = await supabase
   .in('item_id', itemIds);
 ```
 
-### Get Cheapest Store for Basket
+### Get Active Promotions for an Item
 
 ```typescript
-// Group prices by store and calculate totals
-const { data, error } = await supabase
-  .rpc('calculate_basket_totals', {
-    item_ids: [1, 2, 3, 4, 5]
-  });
+const { data } = await supabase
+  .from('active_promotions')
+  .select('*')
+  .eq('barcode', '7290000000000');
 ```
-
-**Note:** You'll need to create a custom PostgreSQL function for basket total calculations.
 
 ## Maintenance
 
-### Update Prices
-
-Prices are updated by the scraper service. The `last_updated` timestamp tracks freshness.
-
-### Clean Old Data
-
-Optionally, set up a cron job to remove stale prices:
-
-```sql
-DELETE FROM prices WHERE last_updated < NOW() - INTERVAL '30 days';
-```
-
-## Troubleshooting
-
-### Connection Issues
-
-- Verify your Supabase URL and API keys
-- Check if your IP is allowed (Supabase dashboard → Settings → Database)
-- Ensure SSL mode is enabled for connections
-
-### Slow Queries
-
-- Check if indexes are created properly
-- Use `EXPLAIN ANALYZE` to identify bottlenecks
-- Consider adding composite indexes for common query patterns
-
-### Data Inconsistencies
-
-- Verify foreign key constraints are working
-- Check for orphaned records
-- Run data validation queries regularly
-
-## Next Steps
-
-1. Set up the scraper to populate product and price data
-2. Configure Supabase client in the mobile app
-3. Implement API service functions for search and comparison
-4. Test with real data from Israeli supermarket chains
+Prices and promotions are updated by the scraper service. The `last_updated` timestamp tracks freshness.
