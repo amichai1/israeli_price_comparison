@@ -59,11 +59,40 @@ ALTER TABLE public.items ADD COLUMN IF NOT EXISTS manufacturer_name TEXT DEFAULT
 
 
 -- =============================================
--- 4. יצירת ה-Views מחדש (מותאמים למבנה החדש)
+-- 4. אבטחה: RLS + Policies
+-- =============================================
+
+-- הפעלת RLS על כל הטבלאות הציבוריות
+ALTER TABLE public.cities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.chains ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stores ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.prices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.promotions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.promotion_items ENABLE ROW LEVEL SECURITY;
+
+-- קריאה בלבד לכולם (הנתונים ציבוריים — חוק שקיפות מחירים)
+-- כתיבה רק דרך service_role (הסקרייפר), שעוקף RLS אוטומטית
+CREATE POLICY "Public read access" ON public.cities FOR SELECT USING (true);
+CREATE POLICY "Public read access" ON public.chains FOR SELECT USING (true);
+CREATE POLICY "Public read access" ON public.stores FOR SELECT USING (true);
+CREATE POLICY "Public read access" ON public.items FOR SELECT USING (true);
+CREATE POLICY "Public read access" ON public.prices FOR SELECT USING (true);
+CREATE POLICY "Public read access" ON public.promotions FOR SELECT USING (true);
+CREATE POLICY "Public read access" ON public.promotion_items FOR SELECT USING (true);
+
+-- תיקון search_path לפונקציות trigger קיימות (מניעת SQL injection)
+ALTER FUNCTION IF EXISTS public.update_modified_column() SET search_path = public;
+ALTER FUNCTION IF EXISTS public.update_updated_at_column() SET search_path = public;
+
+
+-- =============================================
+-- 5. יצירת ה-Views מחדש (ללא SECURITY DEFINER)
 -- =============================================
 
 -- View: השוואת מחירים (כולל שם הרשת מטבלת chains)
-CREATE OR REPLACE VIEW price_comparison AS
+DROP VIEW IF EXISTS price_comparison;
+CREATE VIEW price_comparison WITH (security_invoker = true) AS
 SELECT 
   i.id AS item_id,
   i.barcode,
@@ -80,7 +109,8 @@ JOIN chains c ON s.chain_id = c.id
 ORDER BY i.name, c.name;
 
 -- View: המחיר הזול ביותר
-CREATE OR REPLACE VIEW cheapest_prices AS
+DROP VIEW IF EXISTS cheapest_prices;
+CREATE VIEW cheapest_prices WITH (security_invoker = true) AS
 SELECT 
   i.id AS item_id,
   i.barcode,
@@ -97,7 +127,7 @@ GROUP BY i.id, i.barcode, i.name, i.unit_measure, c.name, p.last_updated;
 
 
 -- =============================================
--- 5. טבלאות מבצעים (Promotions)
+-- 6. טבלאות מבצעים (Promotions)
 -- =============================================
 
 -- טבלת מבצעים — מבצע per-store (אותו PromotionID יכול להופיע בכמה סניפים)
@@ -138,7 +168,8 @@ CREATE INDEX IF NOT EXISTS idx_promo_items_promotion ON promotion_items(promotio
 CREATE INDEX IF NOT EXISTS idx_promo_items_item ON promotion_items(item_id);
 
 -- View: מבצעים פעילים — לשימוש באפליקציה
-CREATE OR REPLACE VIEW active_promotions AS
+DROP VIEW IF EXISTS active_promotions;
+CREATE VIEW active_promotions WITH (security_invoker = true) AS
 SELECT
     pi.item_id,
     i.barcode,
@@ -166,7 +197,7 @@ ORDER BY i.name, c.name;
 
 
 -- =============================================
--- 6. הזנת נתונים ראשוניים (Seed Data)
+-- 7. הזנת נתונים ראשוניים (Seed Data)
 -- =============================================
 
 -- ערים (109 ערים כולל עיר וירטואלית לאתרי אונליין)
