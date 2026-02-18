@@ -1,57 +1,117 @@
-# Price Compare IL - Israeli Supermarket Price Comparison App
+# Price Compare IL
 
-A mobile application for comparing grocery prices across major Israeli supermarket chains, powered by open data published under the Israeli Price Transparency Law.
+> Real-time grocery price comparison across Israel's largest supermarket chains, powered by open government data.
 
-## Overview
+A full-stack mobile application that scrapes, processes, and compares prices from 592 supermarket branches across 4 major Israeli chains. Built with React Native (Expo), Supabase (PostgreSQL), and a custom Node.js data pipeline — all orchestrated via GitHub Actions.
 
-- **Frontend**: React Native + Expo (TypeScript)
-- **Backend**: Supabase (PostgreSQL) — cities, chains, stores, items, prices, promotions
-- **Scraper**: Node.js service that downloads and processes XML price data from supermarket chains via FTP
+## Tech Stack
 
-## Features
+| Layer | Technology |
+|-------|-----------|
+| Mobile App | React Native + Expo (TypeScript) |
+| Database | Supabase (PostgreSQL) with RLS |
+| Scraper | Node.js, XML streaming, HTML parsing |
+| CI/CD | GitHub Actions (scheduled cron jobs) |
+| Notifications | Telegram Bot API |
 
-- Product search by name or barcode
-- Shopping basket management with persistent storage
-- Price comparison across chains with cheapest store highlighting
-- Missing item detection per store
-- Item-by-item price breakdowns
+## Key Features
 
-## Supported Chains
+- **Product Search** — by name or barcode scan
+- **Price Comparison** — across all chains with cheapest store highlighting
+- **Shopping Basket** — persistent basket with per-store price breakdowns
+- **Promotions** — active deals and club discounts
+- **Missing Item Detection** — identifies which stores don't carry a product
 
-| Chain | Scraper Type | Stores |
-|-------|-------------|--------|
-| Rami Levy | Cerberus (FTP) | 98 |
-| Osher Ad | Cerberus (FTP) | 22 |
-| Yochananof | Cerberus (FTP) | 50 |
-| Shufersal | Custom (HTML scraping) | 422 |
+## Data Pipeline
 
-### Supported Document Types
+The scraper downloads XML price files published under the [Israeli Price Transparency Law](https://www.gov.il/he/pages/cpfta), which mandates that major supermarket chains publish their pricing data publicly.
 
-| Type | Status |
-|------|--------|
-| Stores | Supported |
-| PriceFull | Supported |
-| PriceUpdate | Supported |
-| PromoFull | Supported |
-| PromoUpdate | Supported |
+### Supported Chains
+
+| Chain | Platform | Stores | Method |
+|-------|----------|--------|--------|
+| Shufersal | Custom portal | 422 | HTML scraping + Azure Blob download |
+| Rami Levy | Cerberus | 98 | FTP |
+| Yochananof | Cerberus | 50 | FTP |
+| Osher Ad | Cerberus | 22 | FTP |
+
+**Total: 592 stores, 100% city-matched** using a multi-step resolution engine (CBS codes, name normalization, alias mapping, and fallback extraction).
+
+### Document Types
+
+| Type | Description |
+|------|-------------|
+| `stores` | Branch locations and metadata |
+| `pricefull` | Complete price list per store |
+| `price` | Incremental price updates |
+| `promofull` | Full promotions list |
+| `promo` | Incremental promotion updates |
+
+### Scraper Architecture
+
+```
+BaseProvider (abstract)
+├── CerberusProvider    → FTP-based chains (Rami Levy, Osher Ad, Yochananof)
+└── ShufersalProvider   → HTML scraping from prices.shufersal.co.il
+
+BaseProcessor (abstract)
+├── StoreProcessor      → City matching with normalization + aliases
+│   └── ShufersalStoreProcessor  → SAP XML format (uppercase elements)
+├── PriceProcessor      → Streaming XML parser with in-memory caching
+└── PromoProcessor      → Promotion and promotion_items deduplication
+```
+
+Follows the **Dependency Inversion Principle** — base classes depend on abstractions (`_resolveFields()`, `storeElements`), not on chain-specific implementations.
+
+## CI/CD Pipeline (GitHub Actions)
+
+Automated data pipeline using a single workflow file with conditional job routing:
+
+| Schedule | Job | Command | Description |
+|----------|-----|---------|-------------|
+| Daily 05:00 IST | `daily-full` | `pricefull promofull` | Full price and promotion sync |
+| Daily 11:00 IST | `daily-incremental` | `price promo` | Incremental updates |
+| Monthly (1st) | `monthly-stores` | `stores` | Store data synchronization |
+| On-demand | `workflow_dispatch` | Configurable | Manual runs with custom doc types |
+
+- **Security** — All credentials stored in GitHub Secrets (Supabase, Telegram)
+- **Performance** — NPM dependency caching for faster builds
+- **Monitoring** — Telegram notifications on completion/failure
+
+## Database Schema
+
+7 tables with full RLS (Row Level Security) and read-only public access:
+
+```
+cities ──┐
+chains ──┤
+         ├── stores ── prices ── items
+         │              └── promotions ── promotion_items
+         └──────────────────────┘
+```
+
+3 views: `price_comparison`, `cheapest_prices`, `active_promotions`
+
+See [`database/README.md`](database/README.md) for full schema documentation.
 
 ## Project Structure
 
 ```
 israeli_price_comparison/
-├── app/                    # Expo Router screens
-├── components/             # Reusable UI components
-├── lib/                    # Utilities and services
-├── types/                  # TypeScript type definitions
+├── app/                        # Expo Router screens (React Native)
+├── components/                 # Reusable UI components
+├── lib/                        # Utilities and services
+├── types/                      # TypeScript type definitions
+├── server/                     # tRPC backend
 ├── database/
-│   └── schema.sql          # PostgreSQL schema (cities, chains, stores, items, prices, promotions)
+│   └── schema.sql              # PostgreSQL schema — single source of truth
 ├── scraper/
-│   ├── core/               # BaseProvider, BaseProcessor
-│   ├── providers/          # CerberusProvider, ShufersalProvider
-│   ├── processors/         # StoreProcessor, PriceProcessor, PromoProcessor
-│   ├── utils/              # TelegramClient
-│   └── index.js            # CLI entry point
-└── README.md
+│   ├── core/                   # BaseProvider, BaseProcessor
+│   ├── providers/              # CerberusProvider, ShufersalProvider
+│   ├── processors/             # StoreProcessor, PriceProcessor, PromoProcessor
+│   ├── utils/                  # TelegramClient
+│   └── index.js                # CLI entry point
+└── .github/workflows/          # GitHub Actions pipeline
 ```
 
 ## Getting Started
@@ -60,30 +120,30 @@ israeli_price_comparison/
 
 - Node.js 18+
 - Expo CLI
-- A Supabase project with the schema from `database/schema.sql`
+- Supabase project
 
 ### Installation
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/amichai1/israeli_price_comparison.git
 cd israeli_price_comparison
 npm install
 ```
 
-### Environment Setup
+### Environment Variables
 
-Create a `.env` file in the project root with your Supabase credentials:
-
+**App** (root `.env`):
 ```env
 EXPO_PUBLIC_SUPABASE_URL=<your-supabase-url>
 EXPO_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
 ```
 
-For the scraper, create a `.env` file in the `scraper/` directory:
-
+**Scraper** (`scraper/.env`):
 ```env
 SUPABASE_URL=<your-supabase-url>
 SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
+TELEGRAM_BOT_TOKEN=<optional>
+TELEGRAM_CHAT_ID=<optional>
 ```
 
 ### Running the App
@@ -95,44 +155,13 @@ npm run dev
 ### Running the Scraper
 
 ```bash
-cd scraper
-npm install
-node index.js              # default: PriceFull
-node index.js stores       # update store data
-node index.js pricefull    # full price update
-node index.js price        # incremental price update
-node index.js promofull    # full promotions update
-node index.js promo        # incremental promotions update
-node index.js pricefull promofull  # multiple types in sequence
+cd scraper && npm install
+node index.js                      # default: PriceFull
+node index.js stores               # update store data
+node index.js pricefull promofull  # full price + promotions
+node index.js price promo          # incremental updates
 ```
-
-See `scraper/README.md` for detailed scraper documentation.
-
-## Automated Data Pipeline (GitHub Actions)
-
-The scraper runs automatically via GitHub Actions with a single YAML workflow file orchestrating multiple scheduled jobs:
-
-| Schedule | Job | Command | Description |
-|----------|-----|---------|-------------|
-| Daily 05:00 IST | `daily-full` | `pricefull promofull` | Full price and promotion sync |
-| Daily 11:00 IST | `daily-incremental` | `price promo` | Incremental updates only |
-| Monthly (1st) | `monthly-stores` | `stores` | Store data synchronization |
-| Manual | `workflow_dispatch` | Configurable | On-demand runs with custom doc types |
-
-- **Security**: All credentials (Supabase, Telegram) stored in GitHub Secrets — no hardcoded keys in the codebase
-- **Performance**: NPM dependency caching for optimized build times
-- **Architecture**: Conditional job execution (`if: github.event.schedule == ...`) routes each cron trigger to the correct job within a single workflow
-
-## Israeli Price Transparency Law
-
-This app leverages data published under the Israeli Price Transparency Law, which requires major supermarket chains to publish their price data in XML format. Cerberus-based chains (Rami Levy, Osher Ad, Yochananof) publish via FTP at `url.retail.publishedprices.co.il`, while Shufersal publishes on their own portal at `prices.shufersal.co.il`.
-
-### Data Update Frequency
-
-- **Full Price Lists**: Daily
-- **Incremental Updates**: Hourly
-- **Store Information**: Weekly
 
 ## License
 
-This project is for educational and demonstration purposes. Price data is sourced from public Israeli Price Transparency portals.
+This project is for educational and demonstration purposes. Price data is sourced from public Israeli Price Transparency portals as mandated by law.

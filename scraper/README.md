@@ -1,43 +1,54 @@
-# Israeli Price Comparison - Scraper
+# Scraper
 
-Downloads and processes XML price data from Israeli supermarket chains via FTP, and upserts it into a Supabase (PostgreSQL) database.
+Downloads and processes XML price data from Israeli supermarket chains, and upserts it into Supabase (PostgreSQL).
 
 ## Architecture
 
-### Core Components
+### Provider Layer
 
-- **BaseProvider** - Orchestrates the scraping flow: `fetchFileList` -> `filterFiles` -> `processSingleTask`. Handles downloading, decompression (gzip), and cleanup of temporary files.
-- **CerberusProvider** - FTP-based provider for chains on the Cerberus platform. Establishes a single FTP connection per run, lists files by document type, and extracts store IDs from filenames.
-- **BaseProcessor** - Shared database save logic with batched upserts.
-- **StoreProcessor** - Parses store XML files, maps city names to the `cities` table, and upserts store records.
-- **PriceProcessor** - Parses price XML files using streaming (xml-stream), upserts items, and inserts/updates prices. Includes an in-memory cache for item and store ID lookups.
-- **PromoProcessor** - Parses promotion XML files, upserts promotions and promotion_items. Handles deduplication of barcodes within a single promotion.
+Providers handle file discovery and download per chain platform:
+
+- **BaseProvider** — Abstract orchestrator: `fetchFileList` → `filterFiles` → `processSingleTask`. Handles HTTP download, gzip decompression, and temp file cleanup with retry logic.
+- **CerberusProvider** — FTP-based provider for chains on the Cerberus platform. Single FTP connection per run.
+- **ShufersalProvider** — HTML scraping from `prices.shufersal.co.il`. Handles cookie management, pagination, and regex-based HTML table parsing. Downloads from Azure Blob Storage URLs.
+
+### Processor Layer
+
+Processors parse XML and upsert data into Supabase:
+
+- **BaseProcessor** — Shared save logic with batched upserts.
+- **StoreProcessor** — Parses store XML, maps cities via multi-step resolution (CBS codes → name normalization → aliases → fallback extraction). Extensible via `_resolveFields()` and `storeElements` hooks.
+  - **ShufersalStoreProcessor** — Subclass for SAP XML format (uppercase elements: `STORE`, `STOREID`, `STORENAME`).
+- **PriceProcessor** — Streaming XML parser with in-memory cache for item/store ID lookups.
+- **PromoProcessor** — Parses promotions and promotion_items with barcode deduplication.
+
+### City Matching Engine
+
+The `StoreProcessor` uses a 4-step city resolution strategy:
+
+1. **CBS code** — Direct lookup by government statistical code (Cerberus chains)
+2. **City name** — Exact match, then normalized match (hyphens, spelling variants like קרית→קריית)
+3. **Alias mapping** — `CITY_ALIASES` dict for abbreviations, neighborhoods, and alternate names
+4. **Fallback** — Extract known city names from the store name text, then check `STORE_OVERRIDES` for manual mappings
+
+Result: **592/592 stores matched (100%)** across all 4 chains.
 
 ### Flow
 
-1. The CLI (`index.js`) loads chain configurations and instantiates a `CerberusProvider` for each chain.
-2. The provider connects to the FTP server and fetches the file list for the requested document type.
-3. Files are filtered against active stores in the database (for price types) or deduplicated to the latest file (for stores).
-4. Each file is downloaded, decompressed if needed, and passed to the appropriate processor.
-5. The processor parses the XML and upserts data into Supabase in batches.
+1. `index.js` loads chain configs from Supabase and instantiates the appropriate provider per `scraper_type`.
+2. The provider fetches the file list (FTP directory listing or HTML table parsing).
+3. Files are filtered against active stores (for prices) or deduplicated to latest (for stores).
+4. Each file is downloaded, decompressed, and passed to the matching processor.
+5. The processor streams the XML and upserts data in batches.
 
 ## Supported Chains
 
-All chains currently use the Cerberus platform (FTP-based):
-
-- Rami Levy
-- Osher Ad
-- Yochananof
-
-## Document Types
-
-| Type | Status | Description |
-|------|--------|-------------|
-| Stores | Supported | Store locations and metadata |
-| PriceFull | Supported | Full price list for a store |
-| PriceUpdate | Supported | Incremental price changes |
-| PromoFull | Supported | Full promotions list |
-| PromoUpdate | Supported | Incremental promotion changes |
+| Chain | Provider | Stores |
+|-------|----------|--------|
+| Shufersal | ShufersalProvider | 422 |
+| Rami Levy | CerberusProvider | 98 |
+| Yochananof | CerberusProvider | 50 |
+| Osher Ad | CerberusProvider | 22 |
 
 ## Usage
 
@@ -62,7 +73,7 @@ SUPABASE_URL=<your-supabase-url>
 SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
 ```
 
-Optional (for Telegram notifications):
+Optional (Telegram notifications):
 
 ```env
 TELEGRAM_BOT_TOKEN=<your-bot-token>
@@ -74,17 +85,18 @@ TELEGRAM_CHAT_ID=<your-chat-id>
 ```
 scraper/
 ├── core/
-│   ├── BaseProvider.js      # Abstract provider with download/decompress logic
-│   └── BaseProcessor.js     # Shared DB save logic (batched upserts)
+│   ├── BaseProvider.js         # Abstract provider (download, decompress, orchestrate)
+│   └── BaseProcessor.js        # Shared DB save logic (batched upserts)
 ├── providers/
-│   └── CerberusProvider.js  # FTP-based provider for Cerberus chains
+│   ├── CerberusProvider.js     # FTP-based provider
+│   └── ShufersalProvider.js    # HTML scraping provider + ShufersalStoreProcessor
 ├── processors/
-│   ├── StoreProcessor.js    # Store XML parser
-│   ├── PriceProcessor.js    # Price XML parser with streaming
-│   └── PromoProcessor.js    # Promotion XML parser
+│   ├── StoreProcessor.js       # Store XML parser + city matching engine
+│   ├── PriceProcessor.js       # Price XML streaming parser
+│   └── PromoProcessor.js       # Promotion XML parser
 ├── utils/
-│   └── TelegramClient.js    # Telegram notification client
-├── index.js                 # CLI entry point
+│   └── TelegramClient.js       # Telegram notification client
+├── index.js                    # CLI entry point
 ├── package.json
 └── README.md
 ```
