@@ -2,12 +2,12 @@ name: Supermarket Scraper Run
 
 on:
   schedule:
-    # Daily full: prices + promotions (01:30 UTC = 03:30 IST)
+    # Daily full: prices + promotions (01:30 UTC)
     - cron: '30 1 * * *'
-    # Daily incremental: price + promo updates (09:00 UTC = 11:00 IST)
-    - cron: '0 9 * * *'
-    # Monthly: store data (1st of each month at 02:00 UTC)
-    - cron: '0 2 1 * *'
+    # Daily incremental: price + promo updates (09:15 UTC)
+    - cron: '15 9 * * *'
+    # Monthly: store data (1st of each month at 02:20 UTC)
+    - cron: '20 2 1 * *'
   workflow_dispatch:
     inputs:
       doc_types:
@@ -16,15 +16,21 @@ on:
         default: 'pricefull promofull'
 
 jobs:
-  daily-full:
-    if: github.event.schedule == '30 1 * * *'
+  run-scraper:
     runs-on: ubuntu-latest
-
+    
     defaults:
       run:
         working-directory: scraper
 
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
     steps:
+      # --- pre steps ---
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -38,100 +44,20 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Run Scraper (full)
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      # --- run steps ---
+      
+      - name: Run Scraper (Daily Full)
+        if: github.event.schedule == '30 1 * * *'
         run: node index.js pricefull promofull
 
-  daily-incremental:
-    if: github.event.schedule == '0 9 * * *'
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: scraper
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: scraper/package-lock.json
-
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Run Scraper (incremental)
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: Run Scraper (Daily Incremental)
+        if: github.event.schedule == '15 9 * * *'
         run: node index.js price promo
 
-  manual:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: scraper
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: scraper/package-lock.json
-
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Run Scraper
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: node index.js ${{ github.event.inputs.doc_types }}
-
-  monthly-stores:
-    if: github.event.schedule == '0 2 1 * *'
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: scraper
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: scraper/package-lock.json
-
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Update Stores
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: Run Scraper (Monthly Stores)
+        if: github.event.schedule == '20 2 1 * *'
         run: node index.js stores
+
+      - name: Run Scraper (Manual)
+        if: github.event_name == 'workflow_dispatch'
+        run: node index.js ${{ github.event.inputs.doc_types }}
