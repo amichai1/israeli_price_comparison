@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -22,7 +22,7 @@ import { Item } from "@/types";
 export default function SearchScreen() {
   const colors = useColors();
   const { selectedCityId, selectedCityName, setSelectedCity, availableCities } = useCity();
-  const { basket, addItem, removeItem, isInBasket } = useBasket();
+  const { basket, addItem, removeItem, updateQuantity, isInBasket, getQuantity } = useBasket();
   const [searchQuery, setSearchQuery] = useState("");
   const [results, setResults] = useState<Item[]>([]);
   const [loading, setLoading] = useState(false);
@@ -62,32 +62,40 @@ export default function SearchScreen() {
     }
   };
 
-  const handleAddToBasket = async (item: Item) => {
+  const handleIncrement = async (item: Item) => {
     try {
-      await addItem(item);
-
+      const currentQty = getQuantity(item.id);
+      if (currentQty === 0) {
+        await addItem({ ...item, quantity: 1 });
+      } else {
+        await updateQuantity(item.id, currentQty + 1);
+      }
       if (Platform.OS !== "web") {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     } catch (error) {
-      console.error("Error adding to basket:", error);
+      console.error("Error incrementing:", error);
     }
   };
 
-  const handleRemoveFromBasket = async (itemId: number) => {
+  const handleDecrement = async (item: Item) => {
     try {
-      await removeItem(itemId);
-
+      const currentQty = getQuantity(item.id);
+      if (currentQty <= 1) {
+        await removeItem(item.id);
+      } else {
+        await updateQuantity(item.id, currentQty - 1);
+      }
       if (Platform.OS !== "web") {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     } catch (error) {
-      console.error("Error removing from basket:", error);
+      console.error("Error decrementing:", error);
     }
   };
 
   const renderItem = ({ item }: { item: Item }) => {
-    const itemInBasket = isInBasket(item.id);
+    const qty = getQuantity(item.id);
     const nameStyle = getRTLTextStyle(item.name);
 
     return (
@@ -110,19 +118,29 @@ export default function SearchScreen() {
             )}
           </View>
 
-          <TouchableOpacity
-            onPress={() => itemInBasket ? handleRemoveFromBasket(item.id) : handleAddToBasket(item)}
-            activeOpacity={0.7}
-            className={`px-4 py-2 rounded-lg ${
-              itemInBasket ? "bg-error" : "bg-primary"
-            }`}
-          >
-            {itemInBasket ? (
-              <Text className="text-white font-semibold text-sm">הסר</Text>
-            ) : (
-              <Text className="text-white font-semibold text-sm">הוסף</Text>
-            )}
-          </TouchableOpacity>
+          {/* Counter: [-] N [+] */}
+          <View className="flex-row items-center">
+            <TouchableOpacity
+              onPress={() => handleDecrement(item)}
+              activeOpacity={0.7}
+              disabled={qty === 0}
+              className={`w-9 h-9 rounded-full items-center justify-center ${
+                qty === 0 ? "bg-muted/20" : "bg-error"
+              }`}
+            >
+              <Text className={`font-bold text-base ${qty === 0 ? "text-muted" : "text-white"}`}>−</Text>
+            </TouchableOpacity>
+            <Text className="text-foreground font-bold text-base mx-4 min-w-[24px] text-center">
+              {qty}
+            </Text>
+            <TouchableOpacity
+              onPress={() => handleIncrement(item)}
+              activeOpacity={0.7}
+              className="w-9 h-9 rounded-full items-center justify-center bg-primary"
+            >
+              <Text className="text-white font-bold text-base">+</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );

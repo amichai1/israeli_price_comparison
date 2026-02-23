@@ -10,7 +10,9 @@ export async function getBasket(): Promise<BasketItem[]> {
   try {
     const data = await AsyncStorage.getItem(BASKET_KEY);
     if (data) {
-      return JSON.parse(data);
+      const items = JSON.parse(data) as BasketItem[];
+      // backward compat: פריטים ישנים בלי quantity
+      return items.map((item) => ({ ...item, quantity: item.quantity ?? 1 }));
     }
     return [];
   } catch (error) {
@@ -25,18 +27,34 @@ export async function getBasket(): Promise<BasketItem[]> {
 export async function addToBasket(item: BasketItem): Promise<void> {
   try {
     const basket = await getBasket();
-    
+
     // Check if item already exists
     const exists = basket.some((i) => i.id === item.id);
     if (exists) {
       console.log("Item already in basket");
       return;
     }
-    
-    basket.push(item);
+
+    basket.push({ ...item, quantity: item.quantity ?? 1 });
     await AsyncStorage.setItem(BASKET_KEY, JSON.stringify(basket));
   } catch (error) {
     console.error("Error adding to basket:", error);
+    throw error;
+  }
+}
+
+/**
+ * Update quantity of a basket item
+ */
+export async function updateBasketQuantity(itemId: number, quantity: number): Promise<void> {
+  try {
+    const basket = await getBasket();
+    const updated = basket.map((item) =>
+      item.id === itemId ? { ...item, quantity } : item
+    );
+    await AsyncStorage.setItem(BASKET_KEY, JSON.stringify(updated));
+  } catch (error) {
+    console.error("Error updating basket quantity:", error);
     throw error;
   }
 }

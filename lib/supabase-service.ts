@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { Item, Store, Price, StoreComparison } from "@/types";
+import { Item, Store, Price, StoreComparison, ItemPromotion } from "@/types";
 
 // Supabase configuration from environment variables
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
@@ -81,11 +81,121 @@ export async function getStores(): Promise<Store[]> {
 }
 
 /**
+ * שליפת מבצעים פעילים עבור רשימת פריטים
+ * מחזירה Map עם מפתח "storeId_itemId" ומערך מבצעים
+ */
+async function getActivePromotionsForItems(
+  itemIds: number[]
+): Promise<Map<string, ItemPromotion[]>> {
+  const result = new Map<string, ItemPromotion[]>();
+  if (itemIds.length === 0) return result;
+
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("promotion_items")
+    .select(`
+      item_id, min_qty, discount_rate, discounted_price, reward_type,
+      promotions!inner (store_id, description, club_id, min_qty, start_date, end_date)
+    `)
+    .in("item_id", itemIds)
+    .gte("promotions.end_date", now)
+    .lte("promotions.start_date", now);
+
+  if (error || !data) {
+    console.error("Promotions fetch error:", error);
+    return result;
+  }
+
+  for (const row of data as any[]) {
+    const promo = row.promotions;
+    const key = `${promo.store_id}_${row.item_id}`;
+    const promoItem: ItemPromotion = {
+      description: promo.description || "",
+      club_id: promo.club_id || "0",
+      min_qty: row.min_qty || promo.min_qty || 1,
+      reward_type: row.reward_type || "1",
+      discount_rate: row.discount_rate || 0,
+      discounted_price: row.discounted_price || 0,
+    };
+    if (!result.has(key)) {
+      result.set(key, []);
+    }
+    result.get(key)!.push(promoItem);
+  }
+
+  return result;
+}
+
+/**
+ * חישוב מחיר אפקטיבי ליחידה לפי מבצע
+ */
+function calculateEffectivePrice(
+  promo: ItemPromotion,
+  quantity: number,
+  regularPrice: number
+): number {
+  // מתנה — אין השפעה על מחיר
+  if (promo.reward_type === "2") return regularPrice;
+
+  // מבצע כמות (min_qty > 1)
+  if (promo.min_qty > 1) {
+    if (quantity < promo.min_qty) return regularPrice;
+
+    const bundles = Math.floor(quantity / promo.min_qty);
+    const remainder = quantity % promo.min_qty;
+
+    let bundleUnitPrice = regularPrice;
+    if (promo.discounted_price > 0) {
+      // מחיר חבילה (למשל "2 ב-10₪")
+      bundleUnitPrice = promo.discounted_price / promo.min_qty;
+    } else if (promo.discount_rate > 0) {
+      bundleUnitPrice = regularPrice - promo.discount_rate / promo.min_qty;
+    }
+
+    const total = bundles * promo.min_qty * bundleUnitPrice + remainder * regularPrice;
+    return total / quantity;
+  }
+
+  // הנחה רגילה (min_qty ≤ 1)
+  if (promo.discounted_price > 0) return promo.discounted_price;
+  if (promo.discount_rate > 0) return Math.max(0, regularPrice - promo.discount_rate);
+
+  return regularPrice;
+}
+
+/**
+ * בחירת המבצע הטוב ביותר (מחיר נמוך ביותר)
+ */
+function selectBestPromotion(
+  promos: ItemPromotion[],
+  quantity: number,
+  regularPrice: number
+): { price: number; promotion?: ItemPromotion } {
+  let bestPrice = regularPrice;
+  let bestPromo: ItemPromotion | undefined;
+
+  for (const promo of promos) {
+    const effective = calculateEffectivePrice(promo, quantity, regularPrice);
+    if (effective < bestPrice) {
+      bestPrice = effective;
+      bestPromo = promo;
+    }
+  }
+
+  return { price: bestPrice, promotion: bestPromo };
+}
+
+/**
  * Get price comparison for a basket of items
  * @param itemIds - Array of item IDs to compare
  * @param cityId - Optional city ID filter
+ * @param quantities - Optional map of itemId → quantity
  */
-export async function getPriceComparison(itemIds: number[], cityId?: number): Promise<StoreComparison[]> {
+export async function getPriceComparison(
+  itemIds: number[],
+  cityId?: number,
+  quantities?: Map<number, number>
+): Promise<StoreComparison[]> {
   try {
     // שאילתת prices עם join לחנויות, רשתות וערים
     let query = supabase
@@ -159,17 +269,40 @@ export async function getPriceComparison(itemIds: number[], cityId?: number): Pr
       }
     }
 
+    // שליפת מבצעים פעילים
+    const promotionsMap = await getActivePromotionsForItems(itemIds);
+
     // בניית StoreComparison מכל store
     const comparisons: StoreComparison[] = Array.from(storeMap.values()).map((store) => {
-      const totalPrice = store.prices.reduce((sum, p) => sum + p.price, 0);
       const foundItemIds = store.prices.map((p) => p.item_id);
       const missingItemIds = itemIds.filter((id) => !foundItemIds.includes(id));
       const missingItems = missingItemIds.map((id) => itemNameMap.get(id) || `Item ${id}`);
 
-      const availableItems = store.prices.map((p) => ({
-        name: itemNameMap.get(p.item_id) || `Item ${p.item_id}`,
-        price: p.price,
-      }));
+      const availableItems = store.prices.map((p) => {
+        const qty = quantities?.get(p.item_id) ?? 1;
+        const promoKey = `${store.store_id}_${p.item_id}`;
+        const promos = promotionsMap.get(promoKey) || [];
+
+        let finalPrice = p.price;
+        let appliedPromo: ItemPromotion | undefined;
+
+        if (promos.length > 0) {
+          const best = selectBestPromotion(promos, qty, p.price);
+          finalPrice = best.price;
+          appliedPromo = best.promotion;
+        }
+
+        return {
+          name: itemNameMap.get(p.item_id) || `Item ${p.item_id}`,
+          item_id: p.item_id,
+          price: finalPrice,
+          quantity: qty,
+          line_total: finalPrice * qty,
+          promotion: appliedPromo,
+        };
+      });
+
+      const totalPrice = availableItems.reduce((sum, item) => sum + item.line_total, 0);
 
       return {
         store_id: store.store_id,

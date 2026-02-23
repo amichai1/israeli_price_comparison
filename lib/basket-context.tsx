@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { getBasket, addToBasket, removeFromBasket, clearBasket } from './basket-storage';
+import { getBasket, addToBasket, removeFromBasket, clearBasket, updateBasketQuantity } from './basket-storage';
 import { BasketItem } from '@/types';
 
 interface BasketContextType {
@@ -7,8 +7,10 @@ interface BasketContextType {
   loading: boolean;
   addItem: (item: BasketItem) => Promise<void>;
   removeItem: (itemId: number) => Promise<void>;
+  updateQuantity: (itemId: number, quantity: number) => Promise<void>;
   clearItems: () => Promise<void>;
   isInBasket: (itemId: number) => boolean;
+  getQuantity: (itemId: number) => number;
   refreshBasket: () => Promise<void>;
 }
 
@@ -31,22 +33,20 @@ export function BasketProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, []);
 
+  const hasBasketChanged = (prev: BasketItem[], next: BasketItem[]) => {
+    if (prev.length !== next.length) return true;
+    return prev.some(
+      (item, index) => item.id !== next[index]?.id || item.quantity !== next[index]?.quantity
+    );
+  };
+
   const loadBasket = async () => {
     setLoading(true);
     try {
       const items = await getBasket();
-      setBasket((prevBasket) => {
-        // Compare lengths first
-        if (prevBasket.length !== items.length) {
-          return items;
-        }
-        // Compare each item's ID to detect changes
-        const hasChanged = prevBasket.some(
-          (item, index) => item.id !== items[index]?.id
-        );
-        // Only update if something actually changed
-        return hasChanged ? items : prevBasket;
-      });
+      setBasket((prevBasket) =>
+        hasBasketChanged(prevBasket, items) ? items : prevBasket
+      );
     } catch (error) {
       console.error('Error loading basket:', error);
     } finally {
@@ -57,19 +57,9 @@ export function BasketProvider({ children }: { children: ReactNode }) {
   const refreshBasketSilent = async () => {
     try {
       const items = await getBasket();
-      // Only update if the basket actually changed
-      setBasket((prevBasket) => {
-        // Compare lengths first
-        if (prevBasket.length !== items.length) {
-          return items;
-        }
-        // Compare each item's ID to detect changes
-        const hasChanged = prevBasket.some(
-          (item, index) => item.id !== items[index]?.id
-        );
-        // Only update if something actually changed
-        return hasChanged ? items : prevBasket;
-      });
+      setBasket((prevBasket) =>
+        hasBasketChanged(prevBasket, items) ? items : prevBasket
+      );
     } catch (error) {
       console.error('Error refreshing basket:', error);
     }
@@ -99,6 +89,16 @@ export function BasketProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateQuantity = useCallback(async (itemId: number, quantity: number) => {
+    try {
+      await updateBasketQuantity(itemId, quantity);
+      await loadBasket();
+    } catch (error) {
+      console.error('Error updating quantity:', error);
+      throw error;
+    }
+  }, []);
+
   const clearItems = useCallback(async () => {
     try {
       await clearBasket();
@@ -113,6 +113,11 @@ export function BasketProvider({ children }: { children: ReactNode }) {
     return basket.some((item) => item.id === itemId);
   }, [basket]);
 
+  const getQuantity = useCallback((itemId: number) => {
+    const item = basket.find((i) => i.id === itemId);
+    return item?.quantity ?? 0;
+  }, [basket]);
+
   return (
     <BasketContext.Provider
       value={{
@@ -120,8 +125,10 @@ export function BasketProvider({ children }: { children: ReactNode }) {
         loading,
         addItem,
         removeItem,
+        updateQuantity,
         clearItems,
         isInBasket,
+        getQuantity,
         refreshBasket,
       }}
     >

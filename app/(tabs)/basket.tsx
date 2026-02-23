@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import React from "react";
 import {
   View,
   Text,
@@ -20,7 +20,7 @@ import { BasketItem } from "@/types";
 export default function BasketScreen() {
   const colors = useColors();
   const router = useRouter();
-  const { basket, loading, removeItem, clearItems } = useBasket();
+  const { basket, loading, removeItem, updateQuantity, clearItems, getQuantity } = useBasket();
 
   const handleRemoveItem = async (itemId: number) => {
     try {
@@ -31,6 +31,34 @@ export default function BasketScreen() {
       }
     } catch (error) {
       console.error("Error removing item:", error);
+    }
+  };
+
+  const handleIncrement = async (itemId: number) => {
+    try {
+      const currentQty = getQuantity(itemId);
+      await updateQuantity(itemId, currentQty + 1);
+      if (Platform.OS !== "web") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch (error) {
+      console.error("Error incrementing:", error);
+    }
+  };
+
+  const handleDecrement = async (itemId: number) => {
+    try {
+      const currentQty = getQuantity(itemId);
+      if (currentQty <= 1) {
+        await removeItem(itemId);
+      } else {
+        await updateQuantity(itemId, currentQty - 1);
+      }
+      if (Platform.OS !== "web") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch (error) {
+      console.error("Error decrementing:", error);
     }
   };
 
@@ -71,6 +99,7 @@ export default function BasketScreen() {
 
   const renderItem = ({ item }: { item: BasketItem }) => {
     const nameStyle = getRTLTextStyle(item.name);
+    const qty = item.quantity ?? 1;
 
     return (
       <View className="bg-surface rounded-xl p-4 mb-3 border border-border">
@@ -92,17 +121,26 @@ export default function BasketScreen() {
             )}
           </View>
 
-          <TouchableOpacity
-            onPress={() => handleRemoveItem(item.id)}
-            activeOpacity={0.6}
-            className="p-2"
-          >
-            <IconSymbol
-              name="trash.fill"
-              size={20}
-              color={colors.error}
-            />
-          </TouchableOpacity>
+          <View className="flex-row items-center">
+            {/* Counter: [-] N [+] */}
+            <TouchableOpacity
+              onPress={() => handleDecrement(item.id)}
+              activeOpacity={0.7}
+              className="w-9 h-9 rounded-full items-center justify-center bg-error"
+            >
+              <Text className="text-white font-bold text-base">−</Text>
+            </TouchableOpacity>
+            <Text className="text-foreground font-bold text-base mx-4 min-w-[24px] text-center">
+              {qty}
+            </Text>
+            <TouchableOpacity
+              onPress={() => handleIncrement(item.id)}
+              activeOpacity={0.7}
+              className="w-9 h-9 rounded-full items-center justify-center bg-primary"
+            >
+              <Text className="text-white font-bold text-base">+</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );

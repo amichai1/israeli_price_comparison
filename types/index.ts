@@ -30,12 +30,25 @@ export interface Price {
 }
 
 export interface BasketItem extends Item {
-  // Extends Item with any basket-specific properties
+  quantity: number;
+}
+
+export interface ItemPromotion {
+  description: string;
+  club_id: string;          // '0' = כולם, אחר = מועדון
+  min_qty: number;
+  reward_type: string;      // '1' = הנחה, '2' = מתנה
+  discount_rate: number;
+  discounted_price: number;
 }
 
 export interface StoreComparisonItem {
   name: string;
-  price: number;
+  item_id: number;
+  price: number;            // מחיר סופי (אחרי מבצע אם רלוונטי)
+  quantity: number;
+  line_total: number;       // price × quantity
+  promotion?: ItemPromotion; // המבצע שהוחל (אם יש)
 }
 
 export interface StoreComparison {

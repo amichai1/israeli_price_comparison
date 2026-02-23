@@ -17,7 +17,7 @@ import { useBasket } from "@/lib/basket-context";
 import { getPriceComparison } from "@/lib/supabase-service";
 import { useCity } from "@/lib/city-context";
 import { getRTLTextStyle } from "@/lib/rtl-utils";
-import { StoreComparison } from "@/types";
+import { StoreComparison, StoreComparisonItem } from "@/types";
 
 export default function ComparisonScreen() {
   const colors = useColors();
@@ -43,7 +43,8 @@ export default function ComparisonScreen() {
       }
 
       const itemIds = basket.map((item: any) => item.id);
-      const results = await getPriceComparison(itemIds, selectedCityId ?? undefined);
+      const quantities = new Map(basket.map((item: any) => [item.id, item.quantity ?? 1]));
+      const results = await getPriceComparison(itemIds, selectedCityId ?? undefined, quantities);
       setComparisons(results);
     } catch (error) {
       console.error("Error loading comparison:", error);
@@ -189,22 +190,44 @@ export default function ComparisonScreen() {
                 <Text className="text-foreground font-bold mb-3">
                   מוצרים זמינים ({selectedStore.available_items.length})
                 </Text>
-                {selectedStore.available_items.map((item, index) => (
+                {selectedStore.available_items.map((item: StoreComparisonItem, index: number) => (
                   <View
                     key={index}
-                    className={`flex-row justify-between items-center py-2 ${
+                    className={`py-2 ${
                       index < selectedStore.available_items.length - 1 ? "border-b border-border" : ""
                     }`}
                   >
-                    <Text
-                      className="text-foreground text-sm flex-1 mr-3"
-                      style={getRTLTextStyle(item.name)}
-                    >
-                      {item.name}
-                    </Text>
-                    <Text className="text-foreground text-sm font-semibold">
-                      ₪{item.price.toFixed(2)}
-                    </Text>
+                    <View className="flex-row justify-between items-center">
+                      <Text
+                        className="text-foreground text-sm flex-1 mr-3"
+                        style={getRTLTextStyle(item.name)}
+                      >
+                        {item.name}
+                        {item.quantity > 1 ? `  ×${item.quantity}` : ""}
+                      </Text>
+                      <View className="items-end">
+                        <Text className="text-foreground text-sm font-semibold">
+                          ₪{item.price.toFixed(2)}
+                        </Text>
+                        {item.quantity > 1 && (
+                          <Text className="text-muted text-xs">
+                            סה"כ ₪{item.line_total.toFixed(2)}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                    {item.promotion && (
+                      <View className="flex-row items-center mt-1 flex-wrap">
+                        <Text className="text-primary text-xs">
+                          🏷️ {item.promotion.description}
+                        </Text>
+                        {item.promotion.club_id !== "0" && (
+                          <View className="bg-purple-100 rounded px-1.5 py-0.5 ml-2">
+                            <Text className="text-purple-700 text-xs font-semibold">מועדון</Text>
+                          </View>
+                        )}
+                      </View>
+                    )}
                   </View>
                 ))}
               </View>
