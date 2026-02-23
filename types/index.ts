@@ -33,12 +33,18 @@ export interface BasketItem extends Item {
   // Extends Item with any basket-specific properties
 }
 
+export interface StoreComparisonItem {
+  name: string;
+  price: number;
+}
+
 export interface StoreComparison {
   store_id: number;
   chain_name: string;
   branch_name: string | null;
   total_price: number;
   item_count: number;
+  available_items: StoreComparisonItem[];
   missing_items: string[];
   is_complete: boolean;
   is_cheapest?: boolean;

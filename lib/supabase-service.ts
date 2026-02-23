@@ -43,6 +43,7 @@ export async function getCities(): Promise<{ id: number; name: string }[]> {
     const { data, error } = await supabase
       .from("cities")
       .select("id, name")
+      .eq("is_active", true)
       .order("name");
 
     if (error) {
@@ -165,12 +166,18 @@ export async function getPriceComparison(itemIds: number[], cityId?: number): Pr
       const missingItemIds = itemIds.filter((id) => !foundItemIds.includes(id));
       const missingItems = missingItemIds.map((id) => itemNameMap.get(id) || `Item ${id}`);
 
+      const availableItems = store.prices.map((p) => ({
+        name: itemNameMap.get(p.item_id) || `Item ${p.item_id}`,
+        price: p.price,
+      }));
+
       return {
         store_id: store.store_id,
         chain_name: store.chain_name,
         branch_name: store.branch_name,
         total_price: totalPrice,
         item_count: itemIds.length,
+        available_items: availableItems,
         missing_items: missingItems,
         is_complete: missingItems.length === 0,
       };

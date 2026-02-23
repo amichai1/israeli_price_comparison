@@ -25,7 +25,7 @@ export default function BasketScreen() {
   const handleRemoveItem = async (itemId: number) => {
     try {
       await removeItem(itemId);
-      
+
       if (Platform.OS !== "web") {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
@@ -36,16 +36,16 @@ export default function BasketScreen() {
 
   const handleClearBasket = () => {
     Alert.alert(
-      "Clear Basket",
-      "Are you sure you want to remove all items?",
+      "ניקוי סל",
+      "בטוח שברצונך להסיר את כל המוצרים?",
       [
-        { text: "Cancel", style: "cancel" },
+        { text: "ביטול", style: "cancel" },
         {
-          text: "Clear",
+          text: "נקה",
           style: "destructive",
           onPress: async () => {
             await clearItems();
-            
+
             if (Platform.OS !== "web") {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             }
@@ -57,41 +57,41 @@ export default function BasketScreen() {
 
   const handleCompare = () => {
     if (basket.length === 0) {
-      Alert.alert("Empty Basket", "Please add items to your basket first.");
+      Alert.alert("סל ריק", "יש להוסיף מוצרים לסל תחילה.");
       return;
     }
-    
+
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-    
+
     // Navigate to comparison screen
     router.push("/(tabs)/comparison" as any);
   };
 
   const renderItem = ({ item }: { item: BasketItem }) => {
     const nameStyle = getRTLTextStyle(item.name);
-    
+
     return (
       <View className="bg-surface rounded-xl p-4 mb-3 border border-border">
         <View className="flex-row justify-between items-start">
           <View className="flex-1 mr-3">
-            <Text 
+            <Text
               className="text-base font-semibold text-foreground mb-1"
               style={nameStyle}
             >
               {item.name}
             </Text>
             <Text className="text-sm text-muted">
-              Barcode: {item.barcode}
+              ברקוד: {item.barcode}
             </Text>
             {item.unit_measure && (
               <Text className="text-sm text-muted">
-                Unit: {item.unit_measure}
+                יחידה: {item.unit_measure}
               </Text>
             )}
           </View>
-          
+
           <TouchableOpacity
             onPress={() => handleRemoveItem(item.id)}
             activeOpacity={0.6}
@@ -117,10 +117,10 @@ export default function BasketScreen() {
           color={colors.muted}
         />
         <Text className="text-lg text-muted mt-4 text-center">
-          Your basket is empty
+          הסל ריק
         </Text>
         <Text className="text-sm text-muted mt-2 text-center px-8">
-          Search for products and add them to your basket to compare prices
+          חפשו מוצרים והוסיפו לסל כדי להשוות מחירים
         </Text>
       </View>
     );
@@ -132,20 +132,20 @@ export default function BasketScreen() {
       <View className="flex-row justify-between items-center mb-4">
         <View>
           <Text className="text-3xl font-bold text-foreground mb-1">
-            My Basket
+            הסל שלי
           </Text>
           <Text className="text-base text-muted">
-            {basket.length} {basket.length === 1 ? "item" : "items"}
+            {basket.length} {basket.length === 1 ? "מוצר" : "מוצרים"}
           </Text>
         </View>
-        
+
         {basket.length > 0 && (
           <TouchableOpacity
             onPress={handleClearBasket}
             activeOpacity={0.7}
             className="px-3 py-2"
           >
-            <Text className="text-error font-semibold">Clear All</Text>
+            <Text className="text-error font-semibold">נקה הכל</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -169,7 +169,7 @@ export default function BasketScreen() {
             className="bg-primary rounded-xl py-4 items-center"
           >
             <Text className="text-white text-lg font-bold">
-              Compare Prices
+              השווה מחירים
             </Text>
           </TouchableOpacity>
         </View>

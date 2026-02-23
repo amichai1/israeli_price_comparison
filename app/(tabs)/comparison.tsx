@@ -84,7 +84,7 @@ export default function ComparisonScreen() {
               {item.chain_name}
             </Text>
             {item.branch_name && (
-              <Text 
+              <Text
                 className="text-sm text-muted mt-1"
                 style={branchNameStyle}
               >
@@ -95,7 +95,7 @@ export default function ComparisonScreen() {
 
           {isCheapest && (
             <View className="bg-success rounded-full px-3 py-1">
-              <Text className="text-white text-xs font-bold">CHEAPEST</Text>
+              <Text className="text-white text-xs font-bold">הזול ביותר</Text>
             </View>
           )}
         </View>
@@ -106,7 +106,9 @@ export default function ComparisonScreen() {
               ₪{item.total_price.toFixed(2)}
             </Text>
             <Text className="text-sm text-muted mt-1">
-              {item.item_count} items
+              {isComplete
+                ? `${item.item_count} מוצרים`
+                : `${item.item_count - item.missing_items.length} מתוך ${item.item_count} מוצרים`}
             </Text>
           </View>
 
@@ -119,12 +121,12 @@ export default function ComparisonScreen() {
                   color={colors.warning}
                 />
                 <Text className="text-warning text-xs font-semibold ml-1">
-                  {item.missing_items.length} missing
+                  {item.missing_items.length} חסרים
                 </Text>
               </View>
             )}
             <Text className="text-primary text-sm font-semibold">
-              View Details →
+              פרטים →
             </Text>
           </View>
         </View>
@@ -176,8 +178,35 @@ export default function ComparisonScreen() {
                   ₪{selectedStore.total_price.toFixed(2)}
                 </Text>
                 <Text className="text-sm text-muted mt-1">
-                  Total for {selectedStore.item_count} items
+                  {selectedStore.missing_items.length === 0
+                    ? `סה"כ עבור ${selectedStore.item_count} מוצרים`
+                    : `סה"כ עבור ${selectedStore.item_count - selectedStore.missing_items.length} מתוך ${selectedStore.item_count} מוצרים`}
                 </Text>
+              </View>
+
+              {/* רשימת מוצרים זמינים */}
+              <View className="bg-surface rounded-xl p-4 mb-4 border border-border">
+                <Text className="text-foreground font-bold mb-3">
+                  מוצרים זמינים ({selectedStore.available_items.length})
+                </Text>
+                {selectedStore.available_items.map((item, index) => (
+                  <View
+                    key={index}
+                    className={`flex-row justify-between items-center py-2 ${
+                      index < selectedStore.available_items.length - 1 ? "border-b border-border" : ""
+                    }`}
+                  >
+                    <Text
+                      className="text-foreground text-sm flex-1 mr-3"
+                      style={getRTLTextStyle(item.name)}
+                    >
+                      {item.name}
+                    </Text>
+                    <Text className="text-foreground text-sm font-semibold">
+                      ₪{item.price.toFixed(2)}
+                    </Text>
+                  </View>
+                ))}
               </View>
 
               {selectedStore.missing_items.length > 0 && (
@@ -189,11 +218,11 @@ export default function ComparisonScreen() {
                       color={colors.warning}
                     />
                     <Text className="text-warning font-bold ml-2">
-                      Missing Items
+                      מוצרים חסרים
                     </Text>
                   </View>
                   <Text className="text-muted text-sm">
-                    The following items are not available at this store:
+                    המוצרים הבאים לא זמינים בחנות זו:
                   </Text>
                   {selectedStore.missing_items.map((item, index) => (
                     <Text
@@ -205,8 +234,7 @@ export default function ComparisonScreen() {
                     </Text>
                   ))}
                   <Text className="text-muted text-xs mt-3">
-                    The total price shown is partial and does not include these
-                    items.
+                    המחיר המוצג הוא חלקי ואינו כולל מוצרים אלו.
                   </Text>
                 </View>
               )}
@@ -214,7 +242,7 @@ export default function ComparisonScreen() {
               {selectedStore.is_cheapest && (
                 <View className="bg-success/10 rounded-xl p-4 border border-success/30">
                   <Text className="text-success font-bold text-center">
-                    🎉 This is the cheapest option!
+                    🎉 זו האפשרות הזולה ביותר!
                   </Text>
                 </View>
               )}
@@ -229,7 +257,7 @@ export default function ComparisonScreen() {
     return (
       <ScreenContainer className="items-center justify-center">
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text className="text-muted mt-4">Comparing prices...</Text>
+        <Text className="text-muted mt-4">משווה מחירים...</Text>
       </ScreenContainer>
     );
   }
@@ -251,10 +279,10 @@ export default function ComparisonScreen() {
         </TouchableOpacity>
         <View className="flex-1">
           <Text className="text-3xl font-bold text-foreground">
-            Price Comparison
+            השוואת מחירים
           </Text>
           <Text className="text-base text-muted mt-1">
-            {selectedCityName} • Tap a store to see details
+            {selectedCityName} • לחצו על חנות לפרטים
           </Text>
         </View>
       </View>
@@ -268,10 +296,10 @@ export default function ComparisonScreen() {
             color={colors.muted}
           />
           <Text className="text-lg font-semibold text-foreground mt-4">
-            Your basket is empty
+            הסל ריק
           </Text>
           <Text className="text-base text-muted mt-2 text-center px-4">
-            Add items from the search tab to compare prices
+            הוסיפו מוצרים מהחיפוש כדי להשוות מחירים
           </Text>
         </View>
       ) : (

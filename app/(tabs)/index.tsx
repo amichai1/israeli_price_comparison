@@ -22,7 +22,7 @@ import { Item } from "@/types";
 export default function SearchScreen() {
   const colors = useColors();
   const { selectedCityId, selectedCityName, setSelectedCity, availableCities } = useCity();
-  const { basket, addItem, isInBasket } = useBasket();
+  const { basket, addItem, removeItem, isInBasket } = useBasket();
   const [searchQuery, setSearchQuery] = useState("");
   const [results, setResults] = useState<Item[]>([]);
   const [loading, setLoading] = useState(false);
@@ -65,7 +65,7 @@ export default function SearchScreen() {
   const handleAddToBasket = async (item: Item) => {
     try {
       await addItem(item);
-      
+
       if (Platform.OS !== "web") {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
@@ -74,42 +74,53 @@ export default function SearchScreen() {
     }
   };
 
+  const handleRemoveFromBasket = async (itemId: number) => {
+    try {
+      await removeItem(itemId);
+
+      if (Platform.OS !== "web") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch (error) {
+      console.error("Error removing from basket:", error);
+    }
+  };
+
   const renderItem = ({ item }: { item: Item }) => {
     const itemInBasket = isInBasket(item.id);
     const nameStyle = getRTLTextStyle(item.name);
-    
+
     return (
       <View className="bg-surface rounded-xl p-4 mb-3 border border-border">
         <View className="flex-row justify-between items-start">
           <View className="flex-1 mr-3">
-            <Text 
+            <Text
               className="text-base font-semibold text-foreground mb-1"
               style={nameStyle}
             >
               {item.name}
             </Text>
             <Text className="text-sm text-muted">
-              Barcode: {item.barcode}
+              ברקוד: {item.barcode}
             </Text>
             {item.unit_measure && (
               <Text className="text-sm text-muted">
-                Unit: {item.unit_measure}
+                יחידה: {item.unit_measure}
               </Text>
             )}
           </View>
-          
+
           <TouchableOpacity
-            onPress={() => !itemInBasket && handleAddToBasket(item)}
-            disabled={itemInBasket}
+            onPress={() => itemInBasket ? handleRemoveFromBasket(item.id) : handleAddToBasket(item)}
             activeOpacity={0.7}
             className={`px-4 py-2 rounded-lg ${
-              itemInBasket ? "bg-success/20" : "bg-primary"
+              itemInBasket ? "bg-error" : "bg-primary"
             }`}
           >
             {itemInBasket ? (
-              <Text className="text-success font-semibold text-sm">Added</Text>
+              <Text className="text-white font-semibold text-sm">הסר</Text>
             ) : (
-              <Text className="text-white font-semibold text-sm">Add</Text>
+              <Text className="text-white font-semibold text-sm">הוסף</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -121,7 +132,7 @@ export default function SearchScreen() {
     if (loading) {
       return null;
     }
-    
+
     if (searchQuery.trim().length === 0) {
       return (
         <View className="items-center justify-center py-12">
@@ -131,16 +142,16 @@ export default function SearchScreen() {
             color={colors.muted}
           />
           <Text className="text-lg text-muted mt-4 text-center">
-            Search for products by name or barcode
+            חפשו מוצרים לפי שם או ברקוד
           </Text>
         </View>
       );
     }
-    
+
     return (
       <View className="items-center justify-center py-12">
         <Text className="text-lg text-muted text-center">
-          No products found for "{searchQuery}"
+          לא נמצאו מוצרים עבור "{searchQuery}"
         </Text>
       </View>
     );
@@ -152,13 +163,13 @@ export default function SearchScreen() {
       <View className="mb-4 flex-row justify-between items-start">
         <View className="flex-1">
           <Text className="text-3xl font-bold text-foreground mb-2">
-            Search Products
+            חיפוש מוצרים
           </Text>
           <Text className="text-base text-muted">
-            Find and compare prices across Israeli supermarkets
+            חפשו מוצרים והשוו מחירים בין הרשתות
           </Text>
         </View>
-        
+
         {basket.length > 0 && (
           <View className="bg-primary rounded-full px-3 py-2 ml-3">
             <Text className="text-white font-bold text-lg">
@@ -169,8 +180,8 @@ export default function SearchScreen() {
       </View>
 
       {/* City Selector */}
-      <View className="mb-4">
-        <Text className="text-sm font-semibold text-foreground mb-2">City</Text>
+      <View className="mb-4" style={{ zIndex: 10 }}>
+        <Text className="text-sm font-semibold text-foreground mb-2">עיר</Text>
         <TouchableOpacity
           onPress={() => setShowCityPicker(!showCityPicker)}
           activeOpacity={0.7}
@@ -178,14 +189,17 @@ export default function SearchScreen() {
         >
           <Text className="text-foreground font-medium">{selectedCityName}</Text>
           <IconSymbol
-            name="chevron.down"
+            name={showCityPicker ? "chevron.up" : "chevron.down"}
             size={20}
             color={colors.foreground}
           />
         </TouchableOpacity>
-        
+
         {showCityPicker && (
-          <View className="mt-2 bg-surface border border-border rounded-xl overflow-hidden">
+          <View
+            className="mt-2 bg-surface border border-border rounded-xl overflow-hidden"
+            style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20 }}
+          >
             {availableCities.map((city) => (
               <TouchableOpacity
                 key={city.id}
@@ -226,7 +240,7 @@ export default function SearchScreen() {
         <TextInput
           value={searchQuery}
           onChangeText={setSearchQuery}
-          placeholder="Search by name or barcode..."
+          placeholder="חיפוש לפי שם או ברקוד..."
           placeholderTextColor={colors.muted}
           className="bg-surface border border-border rounded-xl pl-10 pr-8 py-3.5 text-foreground"
           returnKeyType="search"
