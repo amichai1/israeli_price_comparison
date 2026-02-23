@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js');
 const CerberusProvider = require('./providers/CerberusProvider');
 const ShufersalProvider = require('./providers/ShufersalProvider');
 const { DOC_TYPES } = require('./core/BaseProvider');
+const TelegramClient = require('./utils/TelegramClient');
 
 // --- 1. Configuration ---
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -32,15 +33,6 @@ function getProvider(chain) {
 }
 
 // --- 3. CLI Argument Parsing ---
-// Usage:
-//   node index.js                  → default: pricefull (daily task)
-//   node index.js stores           → update stores only (monthly task)
-//   node index.js pricefull        → update full prices
-//   node index.js price            → update incremental prices
-//   node index.js promofull        → update full promotions
-//   node index.js promo            → update incremental promotions
-//   node index.js stores pricefull → multiple types in sequence
-
 const DOC_TYPE_MAP = {
   stores:    DOC_TYPES.STORES,
   pricefull: DOC_TYPES.PRICE_FULL,
@@ -53,7 +45,7 @@ function parseDocTypes() {
   const args = process.argv.slice(2).map(a => a.toLowerCase());
 
   if (args.length === 0) {
-    return [DOC_TYPES.PRICE_FULL]; // default: daily price update
+    return [DOC_TYPES.PRICE_FULL];
   }
 
   const types = [];
@@ -76,6 +68,10 @@ async function main() {
   console.log('🚀 Starting Scraper...');
   console.log(`📂 Doc types: ${docTypes.join(', ')}`);
   const globalStart = Date.now();
+
+  // איסוף סטטיסטיקות לסיכום טלגרם
+  const summary = []; // { chain, docType, succeeded, failed, duration }
+  const errors = [];
 
   try {
     const { data: chains, error } = await supabase
@@ -104,11 +100,19 @@ async function main() {
       try {
         for (const docType of docTypes) {
           console.log(`\n📂 Running: ${docType}...`);
-          await provider.run(docType);
+          const result = await provider.run(docType);
+          summary.push({
+            chain: chain.name,
+            docType,
+            succeeded: result?.succeeded || 0,
+            failed: result?.failed || 0,
+            duration: result?.duration || '0',
+          });
         }
         provider.clearCache();
       } catch (chainError) {
         console.error(`❌ Error processing ${chain.name}:`, chainError.message);
+        errors.push({ chain: chain.name, error: chainError.message });
       }
     }
 
@@ -118,7 +122,44 @@ async function main() {
   } finally {
     const totalTime = ((Date.now() - globalStart) / 1000).toFixed(2);
     console.log(`\n🏁 Done. Total time: ${totalTime}s`);
+
+    // שליחת סיכום לטלגרם
+    sendTelegramSummary(docTypes, summary, errors, totalTime);
   }
+}
+
+function sendTelegramSummary(docTypes, summary, errors, totalTime) {
+  const totalSucceeded = summary.reduce((s, r) => s + r.succeeded, 0);
+  const totalFailed = summary.reduce((s, r) => s + r.failed, 0);
+
+  const typesLabel = docTypes.join(', ');
+  const mins = (parseFloat(totalTime) / 60).toFixed(1);
+
+  let msg = `📊 <b>סיכום סריקה</b>\n`;
+  msg += `📂 ${typesLabel}\n`;
+  msg += `⏱ ${mins} דקות\n\n`;
+
+  // שורה לכל רשת
+  for (const r of summary) {
+    const icon = r.failed > 0 ? '⚠️' : '✅';
+    msg += `${icon} <b>${r.chain}</b> [${r.docType}]: ${r.succeeded} קבצים`;
+    if (r.failed > 0) msg += `, ${r.failed} נכשלו`;
+    msg += `\n`;
+  }
+
+  // סיכום כולל
+  msg += `\n📈 סה"כ: ${totalSucceeded} הצליחו`;
+  if (totalFailed > 0) msg += `, ${totalFailed} נכשלו`;
+
+  // שגיאות קריטיות
+  if (errors.length > 0) {
+    msg += `\n\n❌ <b>שגיאות:</b>\n`;
+    for (const e of errors) {
+      msg += `• ${e.chain}: ${e.error}\n`;
+    }
+  }
+
+  TelegramClient.send(msg);
 }
 
 main();

@@ -53,9 +53,6 @@ class BaseProvider {
   // --- Main Execution Flow ---
   async run(docType) {
     console.log(`🚀 מתחיל ריצה עבור ספק: ${this.config.name} [${docType}]`);
-    
-    // ✅ דיווח התחלה לטלגרם
-    TelegramClient.sendStart(this.config.name, docType);
 
     const startTime = Date.now();
 
@@ -64,7 +61,7 @@ class BaseProvider {
       
       if (!allFiles || allFiles.length === 0) {
         console.log('⚠️ לא נמצאו קבצים להורדה.');
-        return;
+        return { succeeded: 0, failed: 0, duration: '0' };
       }
 
       const tasksToProcess = await this.filterFiles(allFiles, docType);
@@ -72,7 +69,7 @@ class BaseProvider {
 
       if (tasksToProcess.length === 0) {
         console.log('⚠️ לא נותרו קבצים לאחר הסינון.');
-        return;
+        return { succeeded: 0, failed: 0, duration: '0' };
       }
 
       const processor = this.getProcessor(docType);
@@ -92,29 +89,24 @@ class BaseProvider {
       
       console.log(`✅ הריצה הסתיימה עבור ${this.config.name} תוך ${duration} שניות`);
       console.log(`📊 סטטיסטיקה: ${succeeded} הצליחו, ${failed} נכשלו (מתוך ${tasksToProcess.length})`);
-      
-      // ✅ דיווח הצלחה וסטטיסטיקה לטלגרם
-      TelegramClient.sendSuccess(this.config.name, docType, duration, succeeded, failed);
 
-      // לוג שגיאות מפורט אם יש כישלונות
       if (failed > 0) {
         console.warn(`⚠️ פירוט קבצים שנכשלו:`);
         results
           .filter(r => r.status === 'rejected')
-          .slice(0, 5) // מציג רק את ה-5 הראשונים בלוג
+          .slice(0, 5)
           .forEach((r, i) => console.warn(`  ${i + 1}. ${r.reason?.message || 'שגיאה לא ידועה'}`));
-        
+
         if (failed > 5) {
           console.warn(`  ... ועוד ${failed - 5} קבצים`);
         }
       }
 
+      return { succeeded, failed, duration };
+
     } catch (err) {
       console.error(`❌ שגיאה קריטית בריצה:`, err.message);
-      
-      // ✅ דיווח שגיאה קריטית לטלגרם
       TelegramClient.sendError(this.config.name, err.message);
-      
       throw err;
     }
   }
