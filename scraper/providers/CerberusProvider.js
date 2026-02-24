@@ -47,7 +47,7 @@ class CerberusProvider extends BaseProvider {
   async run(docType) {
     this.ftpClient = await this._connectFtp();
     try {
-      await super.run(docType);
+      return await super.run(docType);
     } finally {
       this.ftpClient.close();
       this.ftpClient = null;
