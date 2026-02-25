@@ -3,6 +3,30 @@ const fs = require('fs');
 const XmlStream = require('xml-stream');
 const BaseProcessor = require('../core/BaseProcessor');
 
+// מיפוי יחידות מידה לפורמט אחיד
+const UNIT_MEASURE_MAP = {
+  'ק"ג': 'kg', 'קילו': 'kg', 'קילוגרם': 'kg', 'KG': 'kg', 'Kg': 'kg', 'kg': 'kg',
+  'גרם': 'g', 'גרמים': 'g', 'GR': 'g', 'gr': 'g', 'g': 'g',
+  'ליטר': 'l', 'ל': 'l', 'LT': 'l', 'L': 'l', 'l': 'l',
+  'מ"ל': 'ml', 'מיליליטר': 'ml', 'ML': 'ml', 'ml': 'ml',
+  'יחידה': 'unit', 'יחידות': 'unit', 'יח': 'unit', 'UN': 'unit', 'EA': 'unit',
+  'מטר': 'm', 'מ': 'm', 'M': 'm',
+  'ס"מ': 'cm', 'CM': 'cm',
+};
+
+// נורמליזציה של יחידת מידה
+function normalizeUnitMeasure(raw) {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  return UNIT_MEASURE_MAP[trimmed] || trimmed.toLowerCase();
+}
+
+// נורמליזציה של שם מוצר — להתאמת ברקודים פנימיים בין רשתות
+function normalizeName(name) {
+  if (!name) return '';
+  return name.trim().replace(/['"״׳`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 class PriceProcessor extends BaseProcessor {
   constructor(supabase, config) {
     super(supabase, config);
@@ -75,18 +99,32 @@ class PriceProcessor extends BaseProcessor {
   normalize(xmlItem, extStoreId) {
     const barcode = xmlItem.ItemCode || xmlItem.Barcode || xmlItem.ItemOnly;
     const priceRaw = xmlItem.ItemPrice || xmlItem.UnitOfMeasurePrice;
-    
+
     if (!barcode || !priceRaw) return null;
-    
+
     const price = parseFloat(priceRaw);
     if (isNaN(price) || price < 0) return null;
+
+    const name = (xmlItem.ItemName || xmlItem.Name || 'Unknown').trim().slice(0, 255);
+    const itemType = parseInt(xmlItem.ItemType, 10);
+    const itemTypeVal = (itemType === 0 || itemType === 1) ? itemType : 1;
+    const quantity = xmlItem.Quantity ? parseFloat(xmlItem.Quantity) : null;
+    const qtyInPackage = parseInt(xmlItem.QtyInPackage, 10);
+    const unitOfMeasurePrice = xmlItem.UnitOfMeasurePrice ? parseFloat(xmlItem.UnitOfMeasurePrice) : null;
 
     return {
       item_data: {
         barcode: String(barcode).trim(),
-        name: (xmlItem.ItemName || xmlItem.Name || 'Unknown').trim().slice(0, 255),
+        name,
         manufacturer_name: (xmlItem.ManufacturerName || '').trim(),
-        unit_measure: xmlItem.UnitOfMeasure || ''
+        unit_measure: normalizeUnitMeasure(xmlItem.UnitOfMeasure),
+        item_type: itemTypeVal,
+        is_weighted: xmlItem.bIsWeighted === '1' || xmlItem.bIsWeighted === 'true',
+        quantity: isNaN(quantity) ? null : quantity,
+        unit_qty: (xmlItem.UnitQty || '').trim(),
+        qty_in_package: (!isNaN(qtyInPackage) && qtyInPackage > 0) ? qtyInPackage : 1,
+        unit_of_measure_price: (unitOfMeasurePrice !== null && !isNaN(unitOfMeasurePrice)) ? unitOfMeasurePrice : null,
+        normalized_name: normalizeName(name),
       },
       price_data: {
         barcode: String(barcode).trim(),

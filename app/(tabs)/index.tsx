@@ -203,7 +203,7 @@ export default function SearchScreen() {
         <TouchableOpacity
           onPress={() => setShowCityPicker(!showCityPicker)}
           activeOpacity={0.7}
-          className="bg-surface border border-border rounded-xl px-4 py-3 flex-row justify-between items-center"
+          className="bg-surface border border-border rounded-xl px-4 py-3 flex-row-reverse justify-between items-center"
         >
           <Text className="text-foreground font-medium">{selectedCityName}</Text>
           <IconSymbol
@@ -234,7 +234,7 @@ export default function SearchScreen() {
                 }`}
               >
                 <Text
-                  className={`font-medium ${
+                  className={`font-medium text-right ${
                     city.id === selectedCityId ? "text-primary" : "text-foreground"
                   }`}
                 >

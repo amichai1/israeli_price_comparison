@@ -5,6 +5,14 @@ export interface Item {
   barcode: string;
   name: string;
   unit_measure: string | null;
+  manufacturer_name?: string;
+  item_type?: number;                    // 0=ברקוד פנימי, 1=ברקוד תקני (EAN)
+  is_weighted?: boolean;
+  quantity?: number | null;
+  unit_qty?: string;
+  qty_in_package?: number;
+  unit_of_measure_price?: number | null;
+  normalized_name?: string;
   created_at?: string;
   updated_at?: string;
 }

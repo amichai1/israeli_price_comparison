@@ -9,6 +9,62 @@ const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /**
+ * מציאת פריטים מקבילים לברקודים פנימיים (item_type=0)
+ * פריטים תקניים (item_type=1) מוחזרים כמו שהם.
+ * פריטים פנימיים מותאמים לפי normalized_name — מוצא את אותו מוצר ברשתות אחרות.
+ */
+async function resolveEquivalentItems(
+  itemIds: number[]
+): Promise<{ expandedIds: number[]; reverseMap: Map<number, number> }> {
+  const reverseMap = new Map<number, number>(); // equivalent_id → original_id
+  const expandedSet = new Set(itemIds);
+
+  if (itemIds.length === 0) return { expandedIds: [], reverseMap };
+
+  // שליפת item_type + normalized_name לכל הפריטים
+  const { data: items, error } = await supabase
+    .from("items")
+    .select("id, item_type, normalized_name")
+    .in("id", itemIds);
+
+  if (error || !items) return { expandedIds: itemIds, reverseMap };
+
+  // איתור פריטים פנימיים עם שם מנורמל
+  const internalItems = items.filter(
+    (i) => i.item_type === 0 && i.normalized_name && i.normalized_name.length > 0
+  );
+
+  if (internalItems.length === 0) return { expandedIds: itemIds, reverseMap };
+
+  // חיפוש מקבילים לפי normalized_name
+  const normalizedNames = [...new Set(internalItems.map((i) => i.normalized_name!))];
+  const { data: equivalents, error: eqError } = await supabase
+    .from("items")
+    .select("id, normalized_name")
+    .eq("item_type", 0)
+    .in("normalized_name", normalizedNames);
+
+  if (eqError || !equivalents) return { expandedIds: itemIds, reverseMap };
+
+  // בניית מיפוי normalized_name → original_id
+  const nameToOriginal = new Map<string, number>();
+  for (const item of internalItems) {
+    nameToOriginal.set(item.normalized_name!, item.id);
+  }
+
+  // הרחבת הרשימה + מיפוי הפוך
+  for (const eq of equivalents) {
+    const originalId = nameToOriginal.get(eq.normalized_name!);
+    if (originalId === undefined) continue;
+    if (eq.id === originalId) continue; // לא צריך למפות את עצמו
+    expandedSet.add(eq.id);
+    reverseMap.set(eq.id, originalId);
+  }
+
+  return { expandedIds: Array.from(expandedSet), reverseMap };
+}
+
+/**
  * Search for products by name or barcode
  */
 export async function searchProducts(query: string): Promise<Item[]> {
@@ -83,9 +139,11 @@ export async function getStores(): Promise<Store[]> {
 /**
  * שליפת מבצעים פעילים עבור רשימת פריטים
  * מחזירה Map עם מפתח "storeId_itemId" ומערך מבצעים
+ * reverseMap — מיפוי פריט מקביל → פריט מקורי (לברקודים פנימיים)
  */
 async function getActivePromotionsForItems(
-  itemIds: number[]
+  itemIds: number[],
+  reverseMap?: Map<number, number>
 ): Promise<Map<string, ItemPromotion[]>> {
   const result = new Map<string, ItemPromotion[]>();
   if (itemIds.length === 0) return result;
@@ -108,7 +166,9 @@ async function getActivePromotionsForItems(
 
   for (const row of data as any[]) {
     const promo = row.promotions;
-    const key = `${promo.store_id}_${row.item_id}`;
+    // מיפוי חזרה ל-ID המקורי אם יש reverseMap
+    const originalId = reverseMap?.get(row.item_id) ?? row.item_id;
+    const key = `${promo.store_id}_${originalId}`;
     const promoItem: ItemPromotion = {
       description: promo.description || "",
       club_id: promo.club_id || "0",
@@ -197,6 +257,9 @@ export async function getPriceComparison(
   quantities?: Map<number, number>
 ): Promise<StoreComparison[]> {
   try {
+    // התאמת ברקודים פנימיים — הרחבת רשימת הפריטים לכלול מקבילים מרשתות אחרות
+    const { expandedIds, reverseMap } = await resolveEquivalentItems(itemIds);
+
     // שאילתת prices עם join לחנויות, רשתות וערים
     let query = supabase
       .from("prices")
@@ -214,7 +277,7 @@ export async function getPriceComparison(
         ),
         items (name)
       `)
-      .in("item_id", itemIds);
+      .in("item_id", expandedIds);
 
     if (cityId) {
       query = query.eq("stores.city_id", cityId);
@@ -229,7 +292,7 @@ export async function getPriceComparison(
 
     if (!prices || prices.length === 0) return [];
 
-    // קיבוץ prices לפי store
+    // קיבוץ prices לפי store — מיפוי מקבילים חזרה ל-original_id
     const storeMap = new Map<number, {
       store_id: number;
       chain_name: string;
@@ -247,14 +310,29 @@ export async function getPriceComparison(
           prices: [],
         });
       }
-      storeMap.get(sid)!.prices.push({ item_id: p.item_id, price: parseFloat(p.price) });
+      // מיפוי חזרה: אם זה פריט מקביל, מחזירים אותו ל-ID המקורי
+      const originalId = reverseMap.get(p.item_id) ?? p.item_id;
+      storeMap.get(sid)!.prices.push({ item_id: originalId, price: parseFloat(p.price) });
+    }
+
+    // דדופליקציה: אם חנות מחזירה מספר מקבילים לאותו פריט — שומרים את הזול
+    for (const store of storeMap.values()) {
+      const bestByItem = new Map<number, { item_id: number; price: number }>();
+      for (const p of store.prices) {
+        const existing = bestByItem.get(p.item_id);
+        if (!existing || p.price < existing.price) {
+          bestByItem.set(p.item_id, p);
+        }
+      }
+      store.prices = Array.from(bestByItem.values());
     }
 
     // שמות הפריטים למציאת חסרים
     const itemNameMap = new Map<number, string>();
     for (const p of prices as any[]) {
-      if (p.items?.name && !itemNameMap.has(p.item_id)) {
-        itemNameMap.set(p.item_id, p.items.name);
+      const originalId = reverseMap.get(p.item_id) ?? p.item_id;
+      if (p.items?.name && !itemNameMap.has(originalId)) {
+        itemNameMap.set(originalId, p.items.name);
       }
     }
     // אם יש פריטים שלא נמצאו ב-prices, נביא אותם בנפרד
@@ -269,8 +347,8 @@ export async function getPriceComparison(
       }
     }
 
-    // שליפת מבצעים פעילים
-    const promotionsMap = await getActivePromotionsForItems(itemIds);
+    // שליפת מבצעים פעילים (כולל מקבילים)
+    const promotionsMap = await getActivePromotionsForItems(expandedIds, reverseMap);
 
     // בניית StoreComparison מכל store
     const comparisons: StoreComparison[] = Array.from(storeMap.values()).map((store) => {
